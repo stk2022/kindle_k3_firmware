@@ -1,0 +1,142 @@
+#!/bin/sh
+
+US_FLASH_FILE=/mnt/us/update-ota-system*.bin
+MMC_FLASH_FILE=/mnt/mmc/update-ota-system*.bin
+
+SCREEN=/etc/init.d/video
+_OTAUP_EXEC=/tmp/_otaupexec
+
+# "device monitor" code for OTA update failures
+_OTAUP_FAILURE=1026
+
+# Source the config
+_CONFFILE=/etc/updater.conf
+[ -f ${_CONFFILE} ] && . ${_CONFFILE}
+
+restart_update_progress()
+{
+    # Put up the reboot screen in between updates (since the last update screen,
+    # upon success, says that we're rebooting), wait a moment, then wake the
+    # screen back up since putting up the reboot screen sleeps it.
+    #
+    display_reboot_screen
+    sleep 5
+    wake_screen
+    
+    # Put the initial software update screen back up so that the update
+    # progress begins again.
+    #
+    platform_software_update_end
+    display_update_screen_initial
+    
+    # Put us back into software-update mode as far as the screen is
+    # concerned.
+    #
+    platform_software_update_begin
+}
+
+perform_update()
+{
+    cp ${_OTAUP} ${_OTAUP_EXEC}
+    if [ ! -x ${_OTAUP_EXEC} ]; then
+        _OTAUP_EXEC=${_OTAUP}
+    fi
+
+    _RET=0
+
+    _BUNDLE_LINES=`cat ${_UPDATE_FILE} | wc -l`
+    _LINE_COUNT=0
+    _PROG_RESET=0
+
+    while [ ${_LINE_COUNT} -lt ${_BUNDLE_LINES} -a ${_RET} -eq 0 ]; do
+        read _BUNDLE_LINE
+        msg "read bundle line [$_BUNDLE_LINE]" I
+        if [ -n "${_BUNDLE_LINE}" ]; then
+            if [ -f "${_BUNDLE_LINE}" ]; then
+                msg "Applying update ${_BUNDLE_LINE}" I
+                msg "Size of update: `ls -l ${_BUNDLE_LINE} | awk '{print $5;}'` bytes" I
+                msg "Version before update: `cat /etc/version.txt | head -n 1 | sed 's/.*: //'`" I
+                
+                # Restart the update progress when necessary.
+                #
+                if [ ${_PROG_RESET} -eq 0 ]; then
+                    _PROG_RESET=1
+                else
+                    restart_update_progress
+                    _PROG_RESET=0
+                fi
+                
+                ${_OTAUP_EXEC} "${_BUNDLE_LINE}"
+                _RES=$?
+
+                if [ ${_RES} -ne 0 ]; then
+                    msg "OTA update failed (${_RES})" E
+
+                    _RET=1
+                else
+                    msg "OTA update successful for ${_BUNDLE_LINE}" I
+                    msg "Version after update: `cat /etc/version.txt | head -n 1 | sed 's/.*: //'`" I
+                fi
+
+                msg "Deleting OTA bundle file \"${_BUNDLE_LINE}\"" I
+                rm -f "${_BUNDLE_LINE}" 2>/dev/null
+
+            else
+                msg "OTA update bundle error -- update bundle file \"${_BUNDLE_LINE}\" not found" E
+
+            fi
+        fi
+
+        _LINE_COUNT=`expr ${_LINE_COUNT} + 1`
+
+    done <${_UPDATE_FILE}
+
+    return ${_RET}
+}
+
+wait_wand_shutdown()
+{
+    msg "Waiting for wand to shutdown" I
+    while [ "`pgrep -x wand | xargs`" != "" ]; do
+        sleep 5
+    done
+    msg "wand shutdown complete" I
+}
+
+############### START OF SCRIPT ###################
+
+msg "updater started" I
+
+
+if [ -f ${_UPDATE_FILE} ]; then
+
+    wait_wand_shutdown
+
+    # Screen is sleeping at this point.  Wake it up so otaup can show messages.
+    #
+    wake_screen
+
+    perform_update
+    
+    # Begin is in the updatewait script or the restart_update_progress function
+    # above if there's more than one update to do.
+    #
+    platform_software_update_end
+
+    if [ $? -ne 0 ]; then
+        msg "OTA bundle update failed; logging error ${_OTAUP_FAILURE}" E
+        echo ${_OTAUP_FAILURE} >${_EXCEPTION_FILE}
+    fi
+else
+    msg "Update file not found. Not updating" W
+fi
+
+# FIXME: Should we not try to reapply the update?
+rm -f ${US_FLASH_FILE} ${MMC_FLASH_FILE} 2>/dev/null
+
+if [ -f ${_SHUTTING_DOWN_FILE} ]; then
+    shutdown -h -P now
+else
+    telinit $_NORMAL_RUNLEVEL
+fi
+

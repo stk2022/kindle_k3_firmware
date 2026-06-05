@@ -1,0 +1,34 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_FEATURES=/etc/rc.d/features
+[ -f ${_FEATURES} ] && . ${_FEATURES}
+
+case "$1" in
+	start)
+		msg "initializing network configuration" I
+
+		# bring up lo
+		ifconfig lo 127.0.0.1 up
+
+#To be revisited after we remove support for FIREWALL_OFF option
+		if ( is_Luigi_Platform ) ; then
+			cat /etc/sysconfig/iptables | iptables-restore
+			msg "Installed Firewall" I
+		fi
+
+		# create ppp log/status directory
+		mkdir /var/run/ppp 2>/dev/null
+		;;
+
+	*)
+		msg "Usage: $0 {start}" W >&2
+		exit 1
+		;;
+
+esac
+
+exit 0
+

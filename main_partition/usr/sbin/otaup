@@ -1,0 +1,328 @@
+#!/bin/sh
+
+export PATH=/usr/sbin:${PATH}
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# format "FC02" and "FD03"
+BUNDLEDAT="./update[a-zA-Z0-9._-]*.dat"
+BLOCK_SIZE=64
+
+ID_IMAGE=128
+ID_SCRIPT=129
+
+TMPDIR=/tmp/.update-tmp.$$
+
+_EIPUTS=/usr/sbin/eiputs
+[ -f ${_EIPUTS} ] && . ${_EIPUTS}
+
+ERR_GENERAL=U000
+ERR_BUNDLE_VER=U001
+ERR_BUNDLE_MD5=U002
+ERR_IMAGE_MD5=U003
+ERR_UPDATE_MISSING=U004
+ERR_UPDATE_TMPDIR=U005
+ERR_UPDATE_FAILED=U006
+ERR_SIGNATURE_FAILED=U007
+
+
+_ERR_CODE=${ERR_GENERAL}
+
+KEYFILES="/etc/uks/pubprodkey01.pem /etc/uks/pubprodkey02.pem "
+
+display_error_code()
+{
+    eips 1 $((${SCREEN_Y_RES} / ${EIPS_Y_RES} - 2)) $1
+}
+
+
+validate_bundle()
+{
+    _VER=`dd if="$1" bs=1 count=4`
+
+    msg "version is \"${_VER}\"" I
+
+    _VER_OK=0
+
+    case "${_VER}" in
+
+        "FC02" | "FD03" )
+            _VER_OK=1
+            ;;
+
+    esac
+
+    if [ ${_VER_OK} -eq 0 ]; then
+        msg "update version mismatch" E
+
+        display_error_code ${ERR_BUNDLE_VER}
+
+        return 1
+    fi
+
+    _MD5SUM=`dd if="$1" bs=1 count=32 skip=16 | dm`
+    _IMGSUM=`dd if="$1" bs=${BLOCK_SIZE} skip=1 | dm | md5sum | awk '{ print $1 }'`
+
+    if [ ! "${_MD5SUM}" = "${_IMGSUM}" ]; then
+        msg "update image checksum failure" E
+
+        return 1
+    fi
+
+    msg "update image checksum OK" I
+
+    return 0
+}
+
+
+extract_bundle()
+{
+    dd if="$1" bs=${BLOCK_SIZE} skip=1 | dm | tar -C "$2" -xzvf -
+}
+
+
+verify_signature()
+{
+    if [ $# -gt 0 ]; then
+
+        _FILE="$1"
+
+        if [ -f "${_FILE}.sig" ]; then
+
+            local let _FAIL=1
+
+            for key in ${KEYFILES}; do
+
+                /usr/bin/openssl dgst -sha256 -verify "${key}" -signature "${_FILE}.sig" "${_FILE}" 2>&1 >/dev/null
+                if [ $? -eq 0 ]; then
+                    let _FAIL=0
+                    break
+                fi
+
+            done
+
+            if [ ${_FAIL} -ne 0 ]; then
+                msg "signature verification failed on \"${_FILE}\"" E
+                return 1
+            fi
+
+        else
+            msg "signature does not exist for \"${_FILE}\"" E
+
+            return 1
+        fi
+
+    fi
+
+    return 0
+}
+
+
+verify_bundle_files()
+{
+    _BUNDLE_FILES=$(find "$1" ! -type d | grep -v \\.sig$)
+
+    while read _BUNDLE_LINE; do
+    if [ -n "${_BUNDLE_LINE}" ]; then
+        verify_signature "${_BUNDLE_LINE}"
+        if [ $? -ne 0 ]; then
+             return 1
+        fi
+    fi
+
+    done <<EOF
+${_BUNDLE_FILES}
+EOF
+
+    return 0
+}
+
+
+process_image()
+{
+    _RET=0
+
+    if [ $# -gt 0 ]; then
+
+        # bundle line format is "id md5 filename block_count display_name"
+        _ID=$1
+        _MD5SUM=$2
+        _FILE=$3
+        _BLOCK_COUNT=$4
+        _NAME=`echo $5 | sed -e 's/_/ /g'`
+
+        if [ -f "${_FILE}" ]; then
+
+            if [ ${_ID} -ge ${ID_IMAGE} ]; then
+                # data image or script
+
+                case "${_ID}" in
+
+                    ${ID_IMAGE})
+                        # do nothing here -- image flashing is taken care of by a script
+                        msg "skipping image \"${_FILE}\"" D
+                        ;;
+
+                    ${ID_SCRIPT})
+                        msg "script command is \"${_FILE}\"" D
+
+                        sh "${_FILE}"
+                        if [ $? -ne 0 ]; then
+                            _RET=1
+                        fi
+                        ;;
+
+                    *)
+                        ;;
+
+                esac
+
+            fi
+
+        fi
+
+    fi
+
+    return ${_RET}
+}
+
+
+process_images()
+{
+    _RET=0
+
+    _BUNDLE_LINES=`cat "$2" | wc -l`
+    _LINE_COUNT=0
+
+    while [ ${_LINE_COUNT} -lt ${_BUNDLE_LINES} -a ${_RET} -eq 0 ]; do
+        read _BUNDLE_LINE
+        if [ -n "${_BUNDLE_LINE}" ]; then
+            process_image ${_BUNDLE_LINE}
+            if [ $? -ne 0 ]; then
+                _RET=1
+            fi
+        fi
+
+        _LINE_COUNT=`expr ${_LINE_COUNT} + 1`
+    done <"$2"
+
+    sync
+
+    return ${_RET}
+}
+
+
+update_percent_complete()
+{
+    _PERCENT_COMPLETE=$((${_PERCENT_COMPLETE} + $1))
+    update_progressbar ${_PERCENT_COMPLETE}
+}
+
+
+if [ $# -eq 0 ]; then
+    msg "usage: $0 updatefile" W
+    return 1
+fi
+
+display_update_screen_initial
+
+_UPDATEBIN="$1"
+
+export _PERCENT_COMPLETE=0
+
+msg "processing update ${_UPDATEBIN}" I
+
+validate_bundle "${_UPDATEBIN}"
+if [ $? -eq 0 ]; then
+
+    if [ -d ${TMPDIR} ]; then
+        rm -rf ${TMPDIR}
+    fi
+
+    mkdir -p ${TMPDIR}
+    if [ $? -eq 0 ]; then
+
+        update_percent_complete 5
+
+        extract_bundle "${_UPDATEBIN}" "${TMPDIR}"
+
+        cd "${TMPDIR}"
+
+        _BUNDLEDAT=`find . -maxdepth 1 -regex "${BUNDLEDAT}" | head -1`
+
+        if [ -n "${_BUNDLEDAT}" -a -f "${_BUNDLEDAT}" ]; then
+
+            update_percent_complete 5
+
+            verify_bundle_files "${TMPDIR}"
+            if [ $? -eq 0 ]; then
+
+                update_percent_complete 5
+
+                _UPDATE_VERSION=`echo "${_BUNDLEDAT}" | sed 's/\.dat//g'`
+
+                mntroot_rw
+
+                process_images "${_UPDATE_VERSION}" "${_BUNDLEDAT}"
+                if [ $? -eq 0 ]; then
+
+                    display_update_screen_success
+
+                    msg "update complete" I
+
+                    cd ~
+                    rm -rf "${TMPDIR}" 2>/dev/null
+
+                    # success return
+
+                    mntroot_ro
+
+                    return 0
+
+                else
+                    _ERR_CODE=${ERR_UPDATE_FAILED}
+
+                    msg "image update failed" E
+
+                fi
+
+                mntroot_ro
+
+            else
+                _ERR_CODE=${ERR_SIGNATURE_FAILED}
+
+                msg "signature verification failed" E
+
+            fi
+
+        else
+            _ERR_CODE=${ERR_UPDATE_MISSING}
+
+            msg "update*.dat not found" E
+
+        fi
+
+    else
+        _ERR_CODE=${ERR_UPDATE_TMPDIR}
+
+        msg "could not create temporary directory ${TMPDIR}" E
+
+    fi
+
+    cd ~
+    rm -rf "${TMPDIR}" 2>/dev/null
+
+else
+    _ERR_CODE=${ERR_BUNDLE_MD5}
+
+fi
+
+display_update_screen_failure_no_wait
+
+display_error_code ${_ERR_CODE}
+
+# error return
+
+
+return 1

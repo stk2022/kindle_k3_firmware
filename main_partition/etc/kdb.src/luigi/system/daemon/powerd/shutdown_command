@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+/sbin/shutdown -h -P -t 1 now

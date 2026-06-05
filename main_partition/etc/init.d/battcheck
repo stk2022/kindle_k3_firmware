@@ -1,0 +1,165 @@
+#!/bin/sh
+
+# Copyright (C) 2008-2010 Amazon Technologies
+# This script runs in runlevel 2.  It checks to make sure
+# battery is at a certain level before allowing the device to boot
+# fully.  
+# Author: saileshr@lab126.com
+
+# Include global functions
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Include the conf file
+_CONFFILE=/etc/battcheck.conf
+if [  -f $_CONFFILE ]; then
+    . $_CONFFILE
+else
+    msg "battcheck.conf file not found" C
+    exit 1
+fi
+
+_SYS_VOLTAGE=`kdb get system/driver/charger/SYS_VOLTAGE`
+_GOV_PATH=`kdb get system/driver/cpu/SYS_CPU_GOVERNOR`
+_CHARGING_FILE=`kdb get system/driver/charger/SYS_CHARGING_FILE`
+
+_ONDEMAND_GOV="ondemand"
+
+# Returns voltage in mV
+get_voltage() {
+        
+    if [ ! -f ${_SYS_VOLTAGE} ]; then
+        msg "${_SYS_VOLTAGE} not found. Aborting battcheck" C
+        telinit ${_NORMAL_RUNLEVEL}
+        exit 1
+    fi
+
+    return `cat ${_SYS_VOLTAGE}`
+    #return `cat /etc/volt`
+}
+
+get_gasgauge_voltage() {
+    return `gasgauge-info -v | cut -f 1 -d ' ' | xargs`
+}
+
+# Returns battery in percent. Integre no %
+get_batt_percent() {
+        return `gasgauge-info -s | sed 's/\%//'`
+}
+
+print_batt() {
+        get_voltage
+        _VOLTS=$?
+        msg "current voltage = ${_VOLTS}mV" I
+        msg "gasgauge capacity=`gasgauge-info -c` volts=`gasgauge-info -v` current=`gasgauge-info -l`" I
+        msg "Waiting for ${_CRITBATT}mV or ${_CRITCHARGE}%" I
+}
+
+############# START OF SCRIPT #########################
+
+msg "running" I
+
+# Don't check battery if we're on prototype/reference hardware
+_SKIP_CHECK=0
+
+if ( is_PROTO ); then
+    msg "prototype: skipping battcheck" I
+    _SKIP_CHECK=1
+fi
+
+# Check a boot arg to see if we are configured to
+# skip the batt check
+grep -i "nobattcheck" -q /proc/cmdline
+if [ $? -eq 0 ]; then
+    msg "nobattcheck in boot args" I
+    _SKIP_CHECK=1
+fi
+
+# Skip check if there is a file called nobattcheck in the 
+# user store. 
+if [ -f $_NOBATTCHECK_FILE ]; then
+    msg "Found nobattcheck file. Skipping battcheck" I
+    _SKIP_CHECK=1
+fi
+
+if [ $_SKIP_CHECK -eq 1 ]; then
+    msg "skipping battery check" I
+    telinit $_NORMAL_RUNLEVEL
+    exit 0
+fi
+
+if [ "$_CRITBATT" == "" ]; then
+    _CRITBATT=$_CRITBATT_DEFAULT
+fi
+
+_ITR_COUNT=1
+_SHOW_MSG=1
+
+_PREV_GOV=`cat $_GOV_PATH | xargs`
+
+while [ 1 ] ; do
+        get_voltage
+        _MV=$?
+
+        get_gasgauge_voltage
+        _GG_MV=$?
+
+        get_batt_percent
+        _GG_PC=$?
+
+        # any of the following three true can start normal booting
+        if [ $_MV -gt $_CRITBATT -o $_GG_MV -gt $_CRITBATT -o $_GG_PC -ge $_CRITCHARGE ]; then
+                print_batt
+                msg "battery sufficient, booting to normal runlevel" I
+                # restore the original governor
+                echo $_PREV_GOV >$_GOV_PATH
+                
+                # Remove the low batt file because we are not in lowbatt any more
+                rm -f ${LOW_BATT_FILE}
+                telinit $_NORMAL_RUNLEVEL
+                exit 0
+        fi
+
+        # Set the governor to ondemand to save power
+        echo $_ONDEMAND_GOV >$_GOV_PATH
+
+        # We need to show a message that we are in low batt.
+        if [ $_SHOW_MSG -ne 0 ]; then
+            display_lowbat_screen
+            _SHOW_MSG=0
+        fi
+
+        # Don't print the log for every iteration, its too chatty
+        # Print the log every minute
+        _ITR_COUNT=$(($_ITR_COUNT-1))
+        if [ $_ITR_COUNT -eq 0 ]; then
+                _ITR_COUNT=$_ITR_PER_MIN
+                print_batt
+                msg "battery low. Not booting" W
+        fi
+
+        # Make sure system is plugged in.  If is not
+        # plugged in, we must shutdown
+        if [ ! -f $_CHARGING_FILE ] || [ "`cat $_CHARGING_FILE`" -ne "1" ]; then 
+                msg "charger not connected. Shutting down" W
+
+                # Set the reset behavior of eInk so that the screen won't be
+                # cleared when going down
+                reboot_screen_asis
+
+                # restore the original governor
+                echo $_PREV_GOV >$_GOV_PATH
+
+                # Create low batt file to indicate we are in low batt
+                touch ${LOW_BATT_FILE}
+
+                # Shutdown the device
+                shutdown -h -P now
+        fi
+
+        # Wait a few seconds and check again
+        sleep $_WAIT_SECS
+done
+
+exit 0
+

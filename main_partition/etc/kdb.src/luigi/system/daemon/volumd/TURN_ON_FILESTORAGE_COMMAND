@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+modprobe g_file_storage "removable=y"

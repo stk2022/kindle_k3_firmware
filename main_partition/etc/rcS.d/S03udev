@@ -1,0 +1,79 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+
+make_extra_nodes()
+{
+    [ -e /etc/udev/links.conf ] || return 0
+    grep '^[^#]' /etc/udev/links.conf | \
+    while read type name arg1; do
+        [ "$type" -a "$name" -a ! -e "/dev/$name" -a ! -L "/dev/$name" ] || continue
+        case "$type" in
+            L) ln -s $arg1 /dev/$name ;;
+            D) mkdir -p /dev/$name ;;
+            M) mknod -m 600 /dev/$name $arg1 ;;
+            *) msg "links.conf: unparseable line ($type $name $arg1)" E ;;
+        esac
+    done
+}
+
+set_hotplug_handler()
+{
+  echo "" >/proc/sys/kernel/hotplug
+}
+
+# TODO Clean this up : needed per Jon comment in http://reviewboard.corp.lab126.com/r/2415
+_FUNCTIONS=/etc/rc.d/feature
+[ -f ${_FEATURES} ] && . ${_FEATURES}
+_FUNCTIONS=/usr/sbin/idme_functions
+[ -f ${_IDME} ] && . ${_IDME}
+
+set_procs_fns()
+{
+    if ( is_Luigi_Platform ); then
+        echo -n "`read_nor ${PANEL_ID_SIZE} ${PANEL_ID_BASE}`" > /proc/panel_id
+        echo -n "`read_nor ${HW_PCB_SN_SIZE} ${HW_PCB_SN_BASE}`" > /proc/pcbsn
+    fi 
+}
+
+case "$1" in
+    start)
+        msg "setting up virtual fs for hotplug event handling" I
+
+        mount -n -o mode=0755 -t tmpfs tmpfs /dev
+        mkdir /dev/.udev/ /dev/.udev/db/ /dev/.udev/queue/
+        make_extra_nodes
+
+        msg "starting the hotplug events dispatcher" I
+
+        udevd --daemon
+        set_hotplug_handler
+
+        msg "synthesizing initial hotplug events" I
+        udevtrigger
+        udevsettle --timeout=300
+
+        mount /dev/pts
+        
+        #TODO clean this up see above
+        set_procs_fns
+        ;;
+
+    stop)
+        ;;
+
+    restart|force-reload)
+        $0 stop
+        $0 start
+        ;;
+
+    *)
+        msg "usage: $0 {start|stop|restart|force-reload}" W
+        exit 1
+        ;;
+esac
+
+exit 0
+

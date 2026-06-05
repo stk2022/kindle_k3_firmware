@@ -1,0 +1,7 @@
+#!/bin/sh
+
+for PID in `ps aux -T | grep audioServer | awk '{print $3}'` ; do
+chrt $3 $2 $PID
+renice $1 $PID
+done
+

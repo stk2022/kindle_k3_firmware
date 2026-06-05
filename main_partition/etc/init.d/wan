@@ -1,0 +1,182 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -e ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+_FEATURES=/etc/rc.d/features
+[ -e ${_FEATURES} ] && . ${_FEATURES}
+
+WAN_INFO=/var/local/wan/info
+WAN_INFO_OK=/var/run/waninfo.ok
+WAN_FW_STATUS=/var/local/wan/fw
+
+WAN_FW_BASE=/opt/wan/firmware/mt-
+WAN_FW_VERSIONDAT=version.dat
+
+unset WAN_FW_GETVERSION
+
+local _WAN_POWERED_ON=0
+
+init_wan_vars()
+{
+	local RET=1
+
+	. ${WAN_INFO}
+	if [ ${WAN_TYPE} -ge 0 ]; then
+		WAN_FW_DIR=${WAN_FW_BASE}${WAN_TYPE}
+		if [ -d "${WAN_FW_DIR}" ]; then
+			WAN_FW_GETVERSION=${WAN_FW_DIR}/getversion
+			WAN_FW_VERIFY=${WAN_FW_DIR}/verify
+			WAN_FW_FLASH=${WAN_FW_DIR}/flash
+
+			if [ -e "${WAN_FW_DIR}/${WAN_FW_VERSIONDAT}" ]; then
+				RET=0
+			fi
+		fi
+	fi
+
+	return ${RET}
+}
+
+
+power_wan_on()
+{
+	wancontrol wanon
+	RET=$?
+
+	if [ ${RET} -eq 0 ]; then
+		_WAN_POWERED_ON=1
+	fi
+
+	return ${RET}
+}
+
+
+power_wan_off()
+{
+	if [ ${_WAN_POWERED_ON} -ne 0 ]; then
+		wancontrol wanoffkill
+	fi
+}
+
+
+set_fw_status()
+{
+	if [ "$1" = "0" ]; then
+		msg "WAN firmware status failure" E "fsf"
+	fi
+
+	echo "$1" >"${WAN_FW_STATUS}"
+}
+
+
+clear_wan_info()
+{
+	rm "${WAN_INFO}"
+}
+
+
+rebuild_wan_info()
+{
+	rm "${WAN_INFO_OK}"
+	wancontrol wanon
+	wancontrol wanoffkill
+}
+
+
+flash_wan()
+{
+	local RET=1
+
+	msg "verifying WAN firmware bundle" I "vwfb"
+	${WAN_FW_VERIFY} "${WAN_FW_DIR}"
+	if [ $? -eq 0 ]; then
+		msg "flashing WAN firmware" I "fwf"
+		${WAN_FW_FLASH} "${WAN_FW_DIR}"
+		if [ $? -eq 0 ]; then
+			set_fw_status "$1"
+
+			clear_wan_info
+
+			rebuild_wan_info
+
+			RET=0
+		fi
+	fi
+
+	if [ ${RET} -ne 0 ]; then
+		msg "WAN firmware update failure" E "wfuf"
+
+		set_fw_status "0"
+	fi
+
+	return ${RET}
+}
+
+
+check_update_wan()
+{
+	if ! [ -f "${WAN_FW_STATUS}" ]; then
+		power_wan_on
+		if [ $? -eq 0 ]; then
+			init_wan_vars
+			if [ $? -eq 0 ]; then
+				local CUR_WAN_FW_VERSION=`${WAN_FW_GETVERSION}`
+				local NEW_WAN_FW_VERSION=`cat ${WAN_FW_DIR}/version.dat | xargs`
+
+				if ! [ "${CUR_WAN_FW_VERSION}" = "${NEW_WAN_FW_VERSION}" ]; then
+					flash_wan "${NEW_WAN_FW_VERSION}"
+				else
+					set_fw_status "${CUR_WAN_FW_VERSION}"
+				fi
+			else
+				set_fw_status "1"
+			fi
+
+		else
+			msg "WAN power-up failure (1)" E "wpuf1"
+		fi
+
+	else
+		local CUR_WAN_FW_VERSION=`cat ${WAN_FW_STATUS} | xargs`
+
+		if [ "${CUR_WAN_FW_VERSION}" = "0" ]; then
+			msg "WAN firmware status failure" E "fsfc"
+
+		else
+			if ! [ -f "${WAN_INFO}" ]; then
+				power_wan_on
+				if [ $? -ne 0 ]; then
+					msg "WAN power-up failure (2)" E "wpuf2"
+
+					return
+				fi
+			fi
+
+			init_wan_vars
+			if [ $? -eq 0 ]; then
+				local NEW_WAN_FW_VERSION=`cat ${WAN_FW_DIR}/version.dat | xargs`
+
+				if ! [ "${CUR_WAN_FW_VERSION}" = "${NEW_WAN_FW_VERSION}" ]; then
+					power_wan_on
+					if [ $? -eq 0 ]; then
+						flash_wan "${NEW_WAN_FW_VERSION}"
+					else
+						msg "WAN power-up failure (3)" E "wpuf3"
+					fi
+				fi
+			fi
+
+		fi
+	fi
+}
+
+
+if [ "x$1" = "xstart" ] && has_WAN; then
+	check_update_wan
+
+	power_wan_off &
+fi
+
+exit 0
+
+

@@ -1,0 +1,23 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+
+case "$1" in
+
+    start)
+        msg "setting device hostname" I
+        hostname -F /etc/hostname
+        ;;
+  	stop|restart|reload|force-reload)
+		msg "argument '$1' not supported" W
+		exit 3
+		;;
+	*)
+		msg "Usage: $0 start" W
+		exit 1
+		;;
+
+esac
+

@@ -1,0 +1,63 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+DAEMON=/usr/bin/dbus-daemon
+UUIDGEN=/usr/bin/dbus-uuidgen
+NAME=dbus
+DAEMONUSER=root
+PIDDIR=/var/run/dbus
+PIDFILE=$PIDDIR/pid
+UUIDDIR=/var/lib/dbus
+DESC="system message bus"
+
+start_it_up()
+{
+  if [ ! -d $PIDDIR ]; then
+    mkdir -p $PIDDIR
+#    chown $DAEMONUSER $PIDDIR
+#    chgrp $DAEMONUSER $PIDDIR
+  fi
+  if [ -e $PIDFILE ]; then
+    msg "$DESC already started; not starting." I
+    exit 0
+  fi
+
+  if [ ! -d $UUIDDIR ]; then
+    mkdir -p $UUIDDIR
+#    chown $DAEMONUSER $UUIDDIR
+#    chgrp $DAEMONUSER $UUIDDIR
+  fi
+
+  msg "starting $DESC" I
+  $UUIDGEN --ensure  
+  $STARTSTOPD -q -p $PIDFILE -x $DAEMON -S -- --system
+}
+
+shut_it_down()
+{
+  msg "stopping $DESC" I
+  $STARTSTOPD -q -p $PIDFILE -K  
+  rm -f $PIDFILE
+}
+
+case "$1" in
+  start)
+    start_it_up
+  ;;
+  stop)
+    shut_it_down
+  ;;
+  restart|force-reload)
+    shut_it_down
+    sleep 1
+    start_it_up
+  ;;
+  *)
+    msg "Usage: /etc/init.d/$NAME {start|stop|restart|force-reload}" W >&2
+    exit 1
+  ;;
+esac
+
+exit 0

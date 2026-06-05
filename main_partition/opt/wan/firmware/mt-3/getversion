@@ -1,0 +1,4 @@
+#!/bin/sh
+
+modemcmd -v -c "AT+GMR" | grep -v modemcmd | head -1 | awk '{ print $1 }' | xargs
+

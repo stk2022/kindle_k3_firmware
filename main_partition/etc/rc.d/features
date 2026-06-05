@@ -1,0 +1,269 @@
+#!/bin/sh
+
+################################################################################
+# Copyright 2008 Lab126 Inc
+# Features script library provides functions related to the characteristics of 
+# the system encoded into the system's board_id.
+#
+# This is an sh script, not C code. So be careful the true value is 0 and the 
+# false is 1. In any case, to do something if the system is a Mario, invoke
+#
+# if ( is_Mario ); then echo "Do something"; else "Something else"; fi
+#
+# Note the parentheses. Another way of doing this:
+# 
+# { ( is_Mario ) && echo "Do something"; } || echo "Something else"
+################################################################################
+
+BOARDID=/proc/board_id
+
+undef="undefined"
+
+if [ -e $BOARDID ]; then 
+	READOUT=`sed 's/^\(.\)\(.\)\(.\)\(.\)\(.\)\(.\).*/\1 \2 \3 \4 \5 \6/g' $BOARDID`
+else
+	READOUT="L X 1 B 0 0"
+fi
+
+I=1
+for ITEM in $READOUT; do 
+	[ 1 -eq $I ] && _P=$ITEM	
+	[ 2 -eq $I ] && _HWB=$ITEM
+	[ 3 -eq $I ] && _HR=$ITEM
+	[ 4 -eq $I ] && _MS=$ITEM
+	[ 5 -eq $I ] && _RD=$ITEM
+	[ 6 -eq $I ] && _SL=$ITEM
+	J=$(($I+1))
+	I=$J
+done
+
+#########################
+### Product related stuff 
+productid()
+{	
+case "$_P" in
+	A) echo "ADS";return $TRUE;;
+	M) echo "Mario";return $TRUE;;
+	N) echo "Nell";return $TRUE;;
+	T) echo "Turing";return $TRUE;;
+	W) echo "TuringWW";return $TRUE;;
+	E) if [ "x$_SL" == "x1" ]; then
+			echo "NellSL"
+	   else
+			echo "NellWW"
+	   fi
+	   return $TRUE;;
+	L) echo "Luigi";return $TRUE;;
+	S) echo "Shasta";return $TRUE;;
+	*) echo $undef;return $FALSE;;
+esac
+}
+
+is_ADS(){
+if [ "x$_P" == "xA" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_Mario(){
+if [ "x$_P" == "xM" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_Nell(){
+if [ "x$_P" == "xN" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_Turing(){
+if [ "x$_P" == "xT" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_TuringWW(){
+if [ "x$_P" == "xW" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_NellWW(){
+if [ "x$_P" == "xE" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_Luigi(){
+if [ "x$_P" == "xL" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_Shasta(){
+if [ "x$_P" == "xS" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_Shasta_WFO()
+{
+	# Shasta EEE code designation:
+	# "SHR" - WAN/WiFi pcba
+	# "SHW" - WiFi only pcba
+	SHASTA_WFO_PCB_IDENTIFIER="SHW"
+
+	# Must be a Shasta first
+	if [ "x$_P" == "xS" ]; then
+		# Check the PCBA number to determine if WFO
+		pcb_id=`/usr/sbin/idme --pcbsn ?`
+		if [ -n "$pcb_id" ]; then
+			echo "$pcb_id" | grep "$SHASTA_WFO_PCB_IDENTIFIER" > /dev/null 2>&1
+			if [ $? -eq 0 ]; then
+				return $TRUE ; 
+			fi
+		fi
+	fi
+	# Either not a Shasta or not a WFO, either way, not a WFO
+	return $FALSE;
+}
+
+
+is_NellSL(){
+	# check if it is Nell WW
+	if ( is_NellWW ); then
+		# then check for Nell SL
+		if [ "x$_SL" == "x1" ]; then return $TRUE ; else return $FALSE; fi
+	else
+		return $FALSE
+	fi
+}
+
+# Note that, for our purposes here, we just have to check for NellWW to also cover NSL;
+# see the is_NellSL function above.
+#
+is_Mario_Platform(){
+	if ( is_ADS ) || ( is_Mario ) || ( is_Nell ) || ( is_Turing ) || ( is_TuringWW ) || ( is_NellWW ); then
+		return $TRUE
+	else
+		return $FALSE
+	fi
+}
+
+is_Mario_WW(){
+	if ( is_TuringWW ) || ( is_NellWW ); then
+		return $TRUE
+	else
+		return $FALSE
+	fi
+}
+
+is_Luigi_Platform(){
+	if ( is_Luigi ) || ( is_Shasta ); then
+		return $TRUE
+	else
+		return $FALSE
+	fi
+}
+
+#########################
+### Hardware build related stuff
+hwbuildid()
+{	
+case "$_HWB" in
+	X) echo "PROTO";return $TRUE;;
+	E) echo "EVT";return $TRUE;;
+	D) echo "DVT";return $TRUE;;
+	P) echo "PVT";return $TRUE;;
+	*) echo $undef;return $FALSE;;
+esac
+
+}
+
+is_PROTO(){
+if [ "x$_HWB" == "xX" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_EVT(){
+if [ "x$_HWB" == "xE" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_DVT(){
+if [ "x$_HWB" == "xD" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_PVT(){
+if [ "x$_HWB" == "xP" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+#########################
+### Hardware build revision related stuff
+hwrevision()
+{	
+	if [ "x$_HR" != "x0" ]; then 
+		echo "$_HR"
+		return $TRUE
+	else 
+		echo $undef
+		return $FALSE
+	fi
+}
+
+is_rev1(){
+if [ "x$_HR" == "x1" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_rev2(){
+if [ "x$_HR" == "x2" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_rev3(){
+if [ "x$_HR" == "x3" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_rev4(){
+if [ "x$_HR" == "x4" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+is_rev5(){
+if [ "x$_HR" == "x5" ]; then return $TRUE ; else return $FALSE; fi
+}
+
+#########################
+### Memory size related stuff
+memorysize()
+{	
+case "$_MS" in
+	A) echo "128MB Manuf A";return $TRUE;;
+	B) echo "256MB Manuf A";return $TRUE;;
+	*) echo $undef;return $FALSE;;
+esac
+}
+
+has_128MB() {
+if [ "x$_MS" == "xA" ]; then
+	return $TRUE 
+fi
+if [ "x$_MS" == "xB" ]; then 
+	return $TRUE 
+fi
+return $FALSE
+}
+
+has_256MB() {
+if [ "x$_MS" == "xB" ]; then
+	return $TRUE
+else 
+	return $FALSE
+fi
+}
+
+# Return memory as reported by /proc/meminfo
+get_mem_total() {
+    grep MemTotal /proc/meminfo | awk '{print $2}'
+}
+
+#########################
+### Board specific stuff
+is_Luigi3() {
+	if ( is_Luigi ) && ( is_rev3 ); then return $TRUE; else return $FALSE; fi 
+}
+
+has_Ethernet() {
+	if ( is_ADS ) || ( is_Mario ) || ( is_Luigi3 ); then return $TRUE; else return $FALSE; fi
+}
+
+has_WAN()
+{
+    # This isn't correct for some of the older boards, I think, but covers all the actual products.
+    if is_Shasta_WFO; then
+        return $FALSE
+    else
+        return $TRUE
+    fi
+}

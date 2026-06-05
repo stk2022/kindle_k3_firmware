@@ -1,0 +1,171 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   button.functions.turing
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   09/10/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Contains the hal layer for the button diagnostic on a Turing Platform
+#
+#   Data Structures
+#       BUTTON_ID_LIST          - List of buttons to test
+#
+#   Constants
+#       BUTTON_LEFT_PREV_PAGE   - Left Previous Page Button
+#       BUTTON_LEFT_NEXT_PAGE   - Left Next Page Button
+#       BUTTON_HOME             - Home Button
+#       BUTTON_RIGHT_NEXT_PAGE  - Right Next Page Button
+#       BUTTON_MENU             - Menu Button
+#       BUTTON_BACK             - Back Button
+#       VOLUME_UP               - Volume Up Button
+#       VOLUME_DOWN             - Volume Down Button
+#
+#   Routines
+#       button_code_to_label()  - Given a button code, return the name string
+#       do_test_button()        - Test the given button
+#       button_hal_init()       - Hal initialization routine
+#       button_hal_exit()       - Hal cleanup exit routine
+#
+######################################################################
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+# Keyboard HAL
+[ -f ${_KEYBOARD_HAL_FUNCTIONS} ] && . ${_KEYBOARD_HAL_FUNCTIONS}
+
+# Button code definitions (comes through event0)
+export BUTTON_LEFT_PREV_PAGE=109
+export BUTTON_LEFT_NEXT_PAGE=104
+export BUTTON_HOME=98
+export BUTTON_RIGHT_NEXT_PAGE=124
+export BUTTON_MENU=139
+export BUTTON_BACK=91
+export VOLUME_UP=115
+export VOLUME_DOWN=114
+
+
+#
+# Give each button a unique identifier.  We use the keycode as it's
+# unique and saves a separate lookup to determine the button's keycode
+#
+export BUTTON_ID_LIST="$BUTTON_LEFT_PREV_PAGE $BUTTON_LEFT_NEXT_PAGE $BUTTON_HOME $BUTTON_RIGHT_NEXT_PAGE $BUTTON_MENU $BUTTON_BACK $VOLUME_UP $VOLUME_DOWN"
+
+
+
+######################################################################
+# Function:     button_code_to_label
+# Purpose:      Return the name of the button cooresponding to the
+#               passed button id.
+# Paramters:    id - id of the button
+#               One of:
+#                   BUTTON_LEFT_PREV_PAGE
+#                   BUTTON_LEFT_NEXT_PAGE
+#                   BUTTON_HOME
+#                   BUTTON_RIGHT_NEXT_PAGE
+#                   BUTTON_MENU
+#                   BUTTON_BACK
+#                   VOLUME_UP
+#                   VOLUME_DOWN
+# Returns:      none
+# Side Effect:  Echo's the name of the button
+######################################################################
+button_code_to_label()
+{
+    KEY=`keycode_to_label "$1"`
+    echo $KEY
+}
+
+
+######################################################################
+# Function:    do_test_button
+# Purpose:     While watching for button activity, ask the operator
+#               to press and release the specified button and verify that
+#               the system sees the button pressed and released.
+# Paramters:   id - unique ID for the specific button
+# Returns:     none
+# Assumptions: none
+# Side Effect: SUB_TEST_PASS is set based on result
+######################################################################
+do_test_button()
+{
+    button_id="$1"
+    name=`button_code_to_label $button_id`
+    vmsg "do_test_button($name,$button_id)"
+
+    #
+    # Print the button-specific portion of the banner
+    #
+    erase_line 8
+    erase_line 15
+    erase_line 17
+    ${DOUT} -n 2 8 "Press and release the $name button."
+    ${DOUT} -n 2 15 "Press $EXIT_KEY_LABEL if you pressed and released the"
+    ${DOUT} -n 2 17 "$name button but this screen"
+    ${DOUT} 2 19 "did not go away."
+
+    #
+    # Go look for the button pressed and released
+    #
+    DONE=0;
+    while [ $DONE -eq 0 ]; do
+        BUTTON=`$GET_BUTTON_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            if [ $button_id -eq $BUTTON ]; then
+                success "$name Button Diagnostic"
+                DONE=1
+            elif [ $BUTTON -eq -1 ]; then
+                # Enter character from the serial port, throw away...
+                vmsg "Button verify throwing away console return"
+            else
+                vmsg "Button verify failed for $button_id"
+                failure "$name Button Diagnostic"
+                echo "Expected $button_id, but found $BUTTON instead."
+                DONE=1
+            fi
+        elif [ $RETVAL -ne 0 ]; then
+            # Wrong button (or X key) was pressed
+            vmsg "Button verify failed for $button_id"
+            failure "$name Button Diagnostic"
+            DONE=1
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     button_hal_init
+# Purpose:      Hal initialization routine for buttons.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+button_hal_init()
+{
+    #
+    # Nothing to initialize for buttons
+    #
+    vmsg "button_hal_init()"
+}
+
+
+######################################################################
+# Function:     button_hal_exit
+# Purpose:      Hal initialization routine for buttons.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+button_hal_exit()
+{
+    #
+    # Nothing to uninitialize for buttons
+    #
+    vmsg "button_hal_exit()"
+}

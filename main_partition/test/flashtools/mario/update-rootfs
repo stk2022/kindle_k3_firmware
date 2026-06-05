@@ -1,0 +1,32 @@
+#!/bin/sh
+
+_ROOT=/etc/sysconfig/root
+[ -f $_ROOT ] && . $_ROOT
+
+_ROOTFS_FLASH=/dev/${BLKROOT_DEV}p1
+_ROOTFS_FILE=
+
+_SYNC=/bin/sync
+
+if [ $# != 1 ]; then
+    echo "usage: $0 <gzipped rootfs file>"
+    exit 1
+fi
+
+_ROOTFS_FILE="$1"
+
+echo "flashing ${_ROOTFS_FILE} to ${_ROOTFS_FLASH}..."
+
+zcat ${_ROOTFS_FILE} | dd of=${_ROOTFS_FLASH} bs=131072
+_RES=$?
+
+${_SYNC}
+
+if [ ${_RES} -eq 0 ]; then
+    echo "flash completed successfully"
+else
+    echo "flash failed: ${_RES}"
+    _RES=2
+fi
+
+exit ${_RES}

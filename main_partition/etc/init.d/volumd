@@ -1,0 +1,39 @@
+#!/bin/sh
+
+CONF_NAME=volumd
+PMOND_START="lipc-set-prop com.lab126.pmond start "
+PMOND_STOP="lipc-set-prop com.lab126.pmond stop"
+
+NAME="Volume daemon"
+DAEMON=/usr/sbin/volumd
+PIDFILE=/var/run/`basename $DAEMON`.pid
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+if [ -r /etc/sysconfig/mntus ]; then
+	source /etc/sysconfig/mntus
+	DAEMON_ARGS="-d $MNTUS_DEV"
+fi
+
+case "$1" in
+	start)
+		if [ -x "$DAEMON" ]; then
+			msg "starting $NAME" I
+            $PMOND_START $CONF_NAME
+		fi
+		;;
+	stop)
+		if [ -r "$PIDFILE" ]; then
+			msg "stopping $NAME" I
+		    $PMOND_STOP $CONF_NAME
+fi
+		;;
+	*)
+		msg "Usage: /etc/init.d/$NAME {start|stop}" W >&2
+		exit 1
+		;;
+
+esac
+
+exit 0
+

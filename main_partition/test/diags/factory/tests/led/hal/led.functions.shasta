@@ -1,0 +1,437 @@
+######################################################################
+#
+#  File:   led.functions.shasta
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   02/21/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Luigi plaform LED HAL layer for diagnostic LED scripts.  This file will
+#   define various HAL routines based on the utility used for testing
+#   the LED system.
+#
+#   This file contains a HAL for the Luigi platform, which includes:
+#
+#   Data Structures
+#       LED_ID_LIST     - list of LED's to test (by id)
+#       LED_1           - ID for LED #1 (Yellow Charger LED)
+#       LED_2           - ID for LED #2 (Green Charger LED)
+#
+#   Macros
+#       GET_LED1        - Get status of LED 1
+#       SET_LED1_ON     - Turn on LED 1
+#       SET_LED1_OFF    - Turn off LED 1
+#       SET_LED2_ON     - Turn on LED 2
+#       SET_LED2_OFF    - Turn off LED 2
+#
+#   Routines
+#       led_id_to_label(led_id) - convert led ID number to led name
+#       get_led(led_id)         - return status of the given led
+#       set_led(led_id, enable) - Turn on or off the given led
+#       can_light_led()         - Determine if led can be lit up
+#       led_hal_init(void)      - Hal initialization routine
+#       led_hal_exit(void)      - Hal teardown routine
+#
+######################################################################
+
+######################################################################
+# Function:     led_id_to_label
+# Purpose:      Return the string name of the led cooresponding to the
+#               passed in LED id.
+# Parameters:   id - id of the led to get the name of
+# Returns:      Echo's the name of the led, ERROR if led id is unknown
+######################################################################
+led_id_to_label()
+{
+    case "$1" in
+        1)  echo "Yellow Charger" ;;
+        2)  echo "Green Charger" ;;
+        *)  echo "ERROR" ;;
+    esac
+}
+
+
+######################################################################
+# Function:    get_led(led_id)
+# Purpose:     Return whether the led is on or not.
+# Parameters:  led_id   - constant representing LED to get status on
+# Returns:     0 - Led is OFF
+#              1 - Led is ON
+# Assumptions: LED 1 is controlled via PMIC 48, bit 18 (1=ON)
+# Side Effect: none
+######################################################################
+get_led()
+{
+    led_id="$1"
+    led_status=0
+    case "$led_id" in
+        1)
+            led_status=`${GET_LED1}`
+            ;;
+        2)
+            led_status=0
+            ;;
+        *)
+            led_status=0
+            ;;
+    esac
+    if [ $led_status -eq 0 ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+
+######################################################################
+# Function:    set_led(led_id, enable)
+# Purpose:     Turn on or off the specified LED
+# Parameters:  led_id   - constant representing LED to turn on or off
+#              enable   - 1 to turn the led on
+#                         0 to turn the led off
+# Returns:     none
+######################################################################
+set_led()
+{
+    led_id="$1"
+    enable="$2"
+    vmsg "led($led_id, $enable)"
+    case "$enable" in
+        0|"OFF")
+            # Turn off the led
+            case "$led_id" in
+                1)
+                    eval ${SET_LED1_OFF} > /dev/null 2>&1
+                    ;;
+                2)
+                    set_green_led_level $FORCE_GREEN_OFF_LEVEL
+                    eval ${SET_LED2_OFF} > /dev/null 2>&1
+                    ;;
+                *)
+                    ;;
+            esac
+            ;;
+        1|"ON")
+            # Turn on the led
+            case "$led_id" in
+                1)
+                    eval ${SET_LED1_ON} > /dev/null 2>&1
+                    ;;
+                2)
+                    set_green_led_level $FORCE_GREEN_ON_LEVEL
+                    ${SET_GREEN_MAX_BRIGHT} > /dev/null 2>&1
+                    eval ${SET_LED2_ON} > /dev/null 2>&1
+                    ;;
+                *)
+                    ;;
+            esac
+            ;;
+        *)
+            # Unknown request, do nothing
+            vmsg "led(): Invalid value $enable for enable"
+            ;;
+    esac
+}
+
+
+######################################################################
+# Function:    can_light_led
+# Purpose:     Determine if the led can be lit up.  For Mario, we require
+#               external power
+# Parameters:  none
+# Returns:     0 - Can't light LED
+#              1 - Can light LED
+######################################################################
+can_light_led()
+{
+    is_charger_on
+    return $?
+}
+
+
+######################################################################
+# Function:    do_verify_led(the_led, status)
+# Purpose:     Verify the state of the LED by asking the operator.
+# Parameters:  the_led - LED that this routine is to verify status of
+#              status - "on" if the LED should currently be on
+#                       "off" if the LED should currently be off.
+#              verify_led - Whether to ask user to verify led status.
+#                   0 - don't put up verification dialog
+#                   1 - ask user to verify status before continuing
+# Returns:      1 - User exited diagnostic
+#               0 - Successful completion (pass/fail logged elsewhere)
+# Assumptions: none
+# Side Effect: Sets the SUB_TEST_PASS variable via call to success()
+#               or failure() if verify_led = 1.
+######################################################################
+do_verify_led()
+{
+    id=$1
+    led_status="$2"
+    verify_led="$3"
+    name=`led_id_to_label $id`
+
+    #
+    # Light up the LED
+    #
+    set_led $id "$led_status"
+
+    #
+    # Ask user to verify status of LED
+    #
+    if [ ${verify_led} -eq 1 ]; then
+        ${DOUT} -n 11 4 "$name LED Diagnostic    "
+        ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 6 7 "The $name LED should be $led_status now.      "
+        ${DOUT} -n 6 10 "Press $SUCCESS_KEY_LABEL if the LED is $led_status.  "
+        ${DOUT} 6 12 "Press $FAILURE_KEY_LABEL if the LED is NOT $led_status.  "
+
+        DONE=0
+        while [ $DONE -ne 1 ]; do
+            KEY=`$GET_KEYBOARD_INPUT`
+            RETVAL=$?
+            if [ $RETVAL -eq 0 ]; then
+                case "$KEY" in
+                $SUCCESS_KEY)
+                    success "LED $name $led_status Diagnostic Test"
+                    DONE=1;
+                    ;;
+
+                $FAILURE_KEY)
+                    failure "LED $name $led_status Diagnostic Test"
+                    DONE=1;
+                    ;;
+
+                *)
+                    vmsg "Wrong key $KEY pressed.."
+                    ;;
+                esac
+            fi
+        done
+    fi
+    return 0
+}
+
+
+######################################################################
+# Function:     led_display_usb_plugin_request
+# Purpose:      Displays a dialog telling user to plug in USB cable.
+#               Waits for user to hit success key to continue.
+# Parameters:   name - name of test to print in banner of message
+#               device - what to plug USB cable into
+#                   one of "PC" or "Wall Charger"
+# Returns:      none
+######################################################################
+led_display_usb_plugin_request()
+{
+    clear_screen
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    print_center_text "$1" "$base" 8 4
+    banner="Using a USB cable, connect the device"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 7 "$banner"
+    center_text "$2." 8 "$base"
+    ${DOUT} -n $? 9 "to a $2."
+    banner="Once connected, press $SUCCESS_KEY_LABEL to continue..."
+    center_text "$banner" 8 "$base"
+    ${DOUT} $? 11 "$banner"
+
+    # wait for any key
+    wait_for_key $SUCCESS_KEY
+}
+
+
+######################################################################
+# Function:     led_do_prepare_for_test
+# Purpose:      Do any pre-test operations required to allow the led test
+#               to function
+# Parameters:   silent_mode, one of
+#                   0 - indicates to run in silent mode / no UI
+#                   1 - indicates to run in UI mode
+# Returns:      0 - Success
+#               1 - Failure, no power to drive LED
+######################################################################
+led_do_prepare_for_test()
+{
+    # Make sure USB is connected
+    echo "Preparing for LED test..."
+
+    # If the USB cable is not plugged in, ask user to do it
+    is_usb_plugged_in
+    USB_CABLE_PLUGED_IN=$?
+    if [ $USB_CABLE_PLUGED_IN -eq 0 ]; then
+        # If in silent mode, fail silently
+        if [ $1 -eq 0 ]; then
+            return 1
+        fi
+        # Cable is not plugged in, Ask user to plug it in
+        led_display_usb_plugin_request "LED Diagnostics" "wall charger"
+    fi
+
+    # Save charger state
+    export LED_ENABLED_CHARGER=0
+    is_charger_on
+    ON=$?
+    if [ $ON -eq 0 ]; then
+        do_local_echo "Enabling charger in led_do_prepare_for_test"
+
+        # Enable the charger driver
+        charger on
+
+        # Make sure charger has turned on
+        wait_count=0
+        while [ $ON -eq 0 ] && [ $wait_count -ne 10 ]; do
+            is_charger_on
+            ON=$?
+            if [ $ON -eq 0 ]; then
+                sleep 2
+                let wait_count+=1
+            fi
+        done
+        if [ $wait_count -ge 10 ]; then
+            let wait_time=$wait_count*2
+            echo "Waited more than $wait_time seconds for charger"
+        fi
+
+        export LED_ENABLED_CHARGER=1
+    fi
+
+    # Set Green LED to maximum brightness, turn off both LEDs
+    $SET_GREEN_MAX_BRIGHT > /dev/null 2>&1
+    set_green_led_level $ADJUSTER_DISCHARGE_GREEN_LEVEL
+    $SET_LED1_OFF > /dev/null 2>&1
+    $SET_LED2_OFF > /dev/null 2>&1
+
+    return 0
+}
+
+
+######################################################################
+# Function:     led_do_cleanup_from_test
+# Purpose:      Do any post-test operations required to restore the
+#               environment from our LED test
+# Parameters:   none
+# Returns:      none
+######################################################################
+led_do_cleanup_from_test()
+{
+    #
+    # Restore LED states
+    # For LED1, turn it on if charger is installed, off if it's not
+    #
+    if [ $LED_ENABLED_CHARGER -eq 1 ]; then
+        charger off
+        export LED_ENABLED_CHARGER=0
+    else
+        # It was on, make sure to turn the light back on
+        set_led $LED_1 "ON"
+    fi
+}
+
+
+######################################################################
+# Function:     get_green_led_level
+# Purpose:      Read the current battery level at which the GREEN 
+#               "battery full" led lights
+# Parameters:   none
+# Returns:      Level in % from 0-100
+######################################################################
+get_green_led_level()
+{
+    _level=`cat $GREEN_LED_LEVEL_ENTRY`
+    return $_level
+}
+
+
+######################################################################
+# Function:     set_green_led_level
+# Purpose:      Sets the current battery level at which the GREEN 
+#               "battery full" led lights
+# Parameters:   level - int between 1 and 110 representing battery level
+#               at which to light up GREEN led
+# Returns:      none
+######################################################################
+set_green_led_level()
+{
+    echo -n "$1" > $GREEN_LED_LEVEL_ENTRY
+}
+
+
+######################################################################
+# Function:    led_hal_init
+# Purpose:     Initialize led system so that subsequent calls to 
+#              these led HAL primitives will work.
+# Parameters:  none
+# Returns:     none
+######################################################################
+led_hal_init()
+{
+    #
+    # There's currently nothing to do for initialization
+    #
+    vmsg "led_hal_init()"
+}
+
+
+######################################################################
+# Function:    led_hal_exit
+# Purpose:     De-initialize / cleanup led system test
+# Parameters:  none
+# Returns:     none
+######################################################################
+led_hal_exit()
+{
+    #
+    # There's currently nothing to do for tear down
+    #
+    vmsg "led_hal_exit()"
+}
+
+
+# USB Hal Function (for is_usb_plugged_in)...
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+
+# Don't include HAL more than once
+if [ "x$_LED_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+#
+# LED assignments
+#
+export LED_1=1
+export LED_2=2
+export YELLOW_LED=$LED_1
+export GREEN_LED=$LED_2
+
+#
+# List of LED's to test (by ID)
+#
+export LED_ID_LIST="$LED_1 $LED_2"
+
+#
+# LED Control
+#
+export GET_LED1="cat /sys/devices/platform/fsl-usb2-udc/chrgled_state"
+export SET_CLR_ICHRG="pmic wor 48 6 3 0x0"
+export SET_DISABLE_AUTOCHARGE="pmic wor 48 21 21 0x0"
+export SET_LED1_ON="echo -n 1 > /sys/devices/platform/fsl-usb2-udc/chrgled_state"
+export SET_LED1_OFF="echo -n 0 > /sys/devices/platform/fsl-usb2-udc/chrgled_state"
+export SET_GREEN_MAX_BRIGHT="pmic wor 53 23 21 0x7"
+export SET_LED2_ON="pmic wor 53 20 15 0x3f"
+export SET_LED2_OFF="pmic wor 53 23 21 0x0"
+
+
+# Green LED control
+export GREEN_LED_LEVEL_ENTRY="/sys/devices/platform/fsl-usb2-udc/green_led_threshold"
+export ADJUSTER_CHARGE_GREEN_LEVEL=$RUN_IN_LOWER_CHARGE_LIMIT
+export ADJUSTER_RANGE_VALID_GREEN_LEVEL=$ADJUSTER_CHARGE_GREEN_LEVEL
+export ADJUSTER_DISCHARGE_GREEN_LEVEL=110
+export FORCE_GREEN_ON_LEVEL=1
+export FORCE_GREEN_OFF_LEVEL=110
+
+export _LED_HAL_INCLUDED=1

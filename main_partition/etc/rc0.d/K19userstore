@@ -1,0 +1,233 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_PATHS=/etc/sysconfig/paths
+[ -f ${_PATHS} ] && . ${_PATHS}
+
+_FL_ERASED_MNTUS=0
+
+init_volume()
+{
+	if [ "$1" = "create" ]; then
+		_CREATE=1
+
+		msg "creating userstore filesystem" I
+	else
+		_CREATE=0
+		msg "checking userstore filesystem" I
+	fi
+
+	_BASE_MNTUS_DEV=`basename ${MNTUS_DEV}`
+
+	# retrieve the base drive parameters
+	_GEOM=`sfdisk --show-geometry ${MNTUS_DEV}`
+	_MAX_BLOCKS=`echo ${_GEOM} | awk /${_BASE_MNTUS_DEV}/\ '{ print $2 }'`
+	_TRACKSIZE=`echo ${_GEOM} | awk /${_BASE_MNTUS_DEV}/\ '{ print $6 }'`
+	_HEADS=`echo ${_GEOM} | awk /${_BASE_MNTUS_DEV}/\ '{ print $4 }'`
+	_CYLSIZE=`expr ${_TRACKSIZE} \* ${_HEADS}`
+
+	PART_START=${_TRACKSIZE}
+
+	# try to read back the existing partition size
+	PART_SIZE=`sfdisk --force -l ${MNTUS_DEV} | awk '$1 ~ '/${_BASE_MNTUS_DEV}p1/\ '{ print $5 }'`
+
+	if [ -z "${PART_SIZE}" ]; then
+		_CREATE=1
+	fi
+
+	if [ ${_CREATE} -ne 0 ]; then
+		# clear the first cylinder
+		dd if=/dev/zero of=${MNTUS_DEV} bs=${_CYLSIZE} count=1
+
+		# create the volume partition
+		sfdisk -q --force -uS ${MNTUS_DEV} <<EOI
+${PART_START},,b
+EOI
+
+		# read back the created partition size
+		PART_SIZE=`sfdisk --force -l ${MNTUS_DEV} | awk '$1 ~ '/${_BASE_MNTUS_DEV}p1/\ '{ print $5 }'`
+
+		if [ -z "${PART_SIZE}" ]; then
+			msg "could not create the userstore partition" C
+			#######
+		fi
+
+	fi
+
+	# compute the loopback offset
+	SECTOR_SIZE=512
+	PART_OFFSET=`expr ${PART_START} \* ${SECTOR_SIZE}`
+
+	# create the drive parameters file
+	cat >${MNTUS_PARAMS} <<EOI
+# auto-generated file -- do not modify!
+
+# computed values
+MNTUS_PART_START=${PART_START}
+MNTUS_PART_SIZE=${PART_SIZE}
+MNTUS_PART_OFFSET=${PART_OFFSET}
+
+# constant values
+MNTUS_FATSIZE=32
+
+EOI
+
+	# source the new parameters file
+	. ${MNTUS_PARAMS}
+
+	if [ ${_CREATE} -ne 0 ]; then
+		# format the generated partition
+		losetup -o ${MNTUS_PART_OFFSET} ${MNTUS_LOOP_DEV} ${MNTUS_DEV}
+		mkfs.vfat -F ${MNTUS_FATSIZE} -n ${MNTUS_LABEL} -t ${MNTUS_PART_SIZE} -v ${MNTUS_LOOP_DEV} -s 16
+		losetup -d ${MNTUS_LOOP_DEV}
+	fi
+}
+
+
+mount_us()
+{
+	INITFLAG=0
+	# load the mntus settings
+	# should not have to do that anymore : sourcing paths already
+	#. /etc/sysconfig/mntus
+
+	if [ ! -f ${MNTUS_PARAMS} ]; then
+		msg "mntus.param not found, initializing volume" I
+		init_volume
+		INITFLAG=1
+	else
+		. ${MNTUS_PARAMS}
+	fi
+
+	_RES=1
+	[ -e $FLAG_VFAT_SHUTDOWN ] && msg "Found SHUTDOWN flag file" I
+	[ -e $FLAG_VFAT_BOOTUP ] && msg "Found BOOTUP flag file" I
+	if [ -e $FLAG_VFAT_SHUTDOWN ] && [ ! -e $FLAG_VFAT_BOOTUP  ]; then
+		mntus mount
+		_RES=$?
+		rm -f $FLAG_VFAT_SHUTDOWN
+		echo 1 > $FLAG_VFAT_BOOTUP
+	else
+		mntus --fsck mount
+		_RES=$?
+	fi
+		# check success of the mount
+	if [ ${_RES} -ne 0 ]; then
+		_RES=1
+	fi
+
+	# check if volume reformat is needed
+	if [ ${_RES} -ne 0 ]; then
+	
+		_FL_ERASED_MNTUS=1
+
+		init_volume "create"
+		INITFLAG=1
+
+		# mount and load it
+		mntus mount
+		_RES=$?
+
+		if [ ${_RES} -ne 0 ]; then
+			msg "mntus failure ${_RES}" C
+
+			_RES=1
+		fi
+	fi
+
+	if [ ${_RES} -eq 0 ] && [ ${INITFLAG} -eq 1 ] ; then
+		# handle default content
+
+		msg "installing default content" I
+		if [ -e $MNTLOG_DC/system/ENABLE_DIAGS ]; then
+			mntroot_rw
+			touch ${MNTUS_MP}/ENABLE_DIAGS
+			rm -rf $MNTLOG_DC/system/ENABLE_DIAGS
+			mntroot_ro
+		fi
+
+		mkdir -p ${MNTUS_MP}/system ${MNTUS_MP}/documents ${MNTUS_MP}/music
+
+		local _SOURCE_KUG_DIR_BASE="/opt/amazon/kug/"
+		local _SOURCE_KUG_DEFAULT="T"
+		local _SOURCE_KUG_DIR="${_SOURCE_KUG_DIR_BASE}`cat /proc/board_id | cut -b -1`"
+		if [ -d "${_SOURCE_KUG_DIR}" ]; then
+			cp -RpL ${_SOURCE_KUG_DIR}/* ${MNTUS_MP}/documents/;
+		else
+			cp -RpL ${_SOURCE_KUG_DIR_BASE}${_SOURCE_KUG_DEFAULT}/* ${MNTUS_MP}/documents/;
+		fi
+
+		# ADS workaround for the browser, part 2: restore prefs (part 1 is in factory_restore)
+		if (  is_ADS  ); then
+			if [ -d /opt/browser ]; then
+				mntroot_rw
+				mkdir -p /var/local/java/prefs/browser
+				cp -a /opt/browser/* /var/local/java/prefs/browser
+				rm -rf /opt/browser
+				mntroot_ro
+			fi
+		fi
+
+		[ -d ${MNTUS_MP}/system ] && dosattr -hs ${MNTUS_MP}/system;
+	fi
+
+	/bin/mount /mnt/us
+
+	# clean up after OTA
+	find /mnt/us/. -type f -name \*.tmp | xargs rm -f
+}
+
+umount_us()
+{
+	[ -e $FLAG_VFAT_SHUTDOWN ] && msg "Found SHUTDOWN flag file" I
+	[ -e $FLAG_VFAT_BOOTUP ] && msg "Found BOOTUP flag file" I
+	if [ -e $FLAG_VFAT_BOOTUP ] && [ ! -e $FLAG_VFAT_SHUTDOWN  ]; then
+		rm -f $FLAG_VFAT_BOOTUP
+		mntus umount
+		_RES=$?
+	else
+		rm -f $FLAG_VFAT_BOOTUP
+		mntus --fsck umount
+		_RES=$?
+	fi
+	
+	if [ ${_RES} -eq 0 ]; then
+		/bin/umount /mnt/us >/dev/null 2>/dev/null
+		echo 1 > $FLAG_VFAT_SHUTDOWN
+	fi
+}
+
+case "$1" in
+	start)
+		mount_us	
+		;;
+	stop)
+		lipc-send-event -r 3 com.lab126.hal usbUnconfigured
+		STATUS=`lipc-get-prop com.lab126.volumd driveModeState`
+		I=0
+		while [ ${STATUS} -ne 0 ]; do
+			sleep 1
+			STATUS=`lipc-get-prop com.lab126.volumd driveModeState`
+			J=$(($I+1))
+			I=$J
+			[ $I -gt 4 ] && break;
+		done
+		
+		umount_us
+		;;
+		
+	restart|force-reload)
+		: 
+		;;
+	*)
+    	msg "usage: /etc/init.d/$NAME {start|stop}" W >&2 
+		exit 1
+		;;
+
+esac
+
+exit 0
+
+

@@ -1,0 +1,168 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -e ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_PATHS=/etc/sysconfig/paths
+[ -e $_PATHS ] && . $_PATHS
+
+remove_misc_files()
+{
+	mntroot_rw
+
+	rm -rf /test/bin /test/ebook /usr/sbin/ufbvncd
+
+	mntroot_ro
+}
+
+HALTIT=$1
+
+if [ $# != 0 ]; then
+	msg "parameter is $HALTIT" D
+fi
+
+BLOCKS=4096
+DEVZERO=/dev/zero
+
+# If this file exists, the device is not in ship mode
+NOT_SHIPPED_FILE=/opt/config/not_shipped
+
+VARPART=`df | sed '/\/var\/local/!d; s/\(\S*\)\s*.*local.*/\1/g'`
+VARSIZE=`df | sed '/\/var\/local/!d; s/\S*\s*\(\S*\).*local.*/\1/g'`
+if [ $VARSIZE -lt $BLOCKS ]; then 
+	VARBLOCK=$VARSIZE
+else
+	VARBLOCK=$BLOCKS
+fi
+
+FATPART=`echo $VARPART | sed 's/\(mmcblk[0-9]p\)2/\14/g'`
+FATSIZE=`df | sed '/\/mnt\/us/!d; s/\S*\s*\(\S*\).*mnt\/us.*/\1/g'`
+if [ $FATSIZE -lt $BLOCKS ]; then 
+	FATBLOCK=$FATSIZE
+else
+	FATBLOCK=$BLOCKS
+fi
+
+# if updating the screen, get that done first
+case $HALTIT in
+	0|2)
+		# do nothing more for now
+		;;
+	
+	1)
+		# kill the framework and put up the amazon screen
+		shutdown_framework $SHUTDOWN_FRAMEWORK_AMAZON_SCREEN
+
+		remove_misc_files
+		;;
+
+	*)
+		# kill the framework and put up the reboot screen
+		shutdown_framework $SHUTDOWN_FRAMEWORK_REBOOT_SCREEN
+
+		remove_misc_files
+		;;
+esac
+
+# stop everything that may get in the way
+stop_all
+
+# ensure the GSM WAN is set to automatic selection mode
+_WANINFO=/var/local/wan/info
+_WAND=wand
+_WAN_MGROAM_PEER=4
+_WAN_MGROAM_BIN=/usr/sbin/dtpmgroam
+
+[ -e ${_WANINFO} ] && . ${_WANINFO}
+if [ "${WAN_TYPE}" = "3" ]; then
+	MCS_COOKIE=/var/run/mcsdwc.dat
+	MCS_SET_AUTO_MODE_TO=60
+	MCS_SET_AUTO_MODE_OP="0"
+
+	_STOP_COUNT=0
+	_STOP_MAX=120
+
+	while [ ${_STOP_COUNT} -lt ${_STOP_MAX} ] ; do
+
+		if [ -z "`pidof ${_WAND}`" ] ; then
+			wancontrol wanoffkill
+			echo "${MCS_SET_AUTO_MODE_TO} ${MCS_SET_AUTO_MODE_OP}" >${MCS_COOKIE}
+
+			wancontrol wanon
+
+			if [ "${WAN_PEER}" = "${_WAN_MGROAM_PEER}" ] ; then
+				_WAN_MGROAM_VALUE=1
+			else
+				_WAN_MGROAM_VALUE=0
+			fi
+
+			${_WAN_MGROAM_BIN} ${_WAN_MGROAM_VALUE}
+
+			wancontrol wanoffkill
+			break
+		fi
+
+		_STOP_COUNT=`expr ${_STOP_COUNT} + 1`
+		sleep 1
+
+	done
+
+fi
+
+# ADS workaround for the browser, part 1: save prefs (part 2 is in userstore)
+if (  is_ADS  ); then
+    if [ -d /var/local/java/prefs/browser ]; then
+        mntroot_rw
+        mkdir -p /opt/browser
+        cp -a /var/local/java/prefs/browser/* /opt/browser
+        mntroot_ro
+    fi
+fi
+
+# blast the /var/local/ partition
+msg "resetting $VARPART and $FATPART" I
+dd if=$DEVZERO of=$VARPART count=$VARBLOCK
+_RES1=$?
+dd if=$DEVZERO of=$FATPART count=$FATBLOCK
+_RES2=$?
+
+if [ ${_RES1} -eq 0 ] && [ ${_RES2} -eq 0 ]; then
+	msg "reset completed successfully" I
+else
+	msg "reset failed: $VARPART=${_RES1} $FATPART=${_RES2}" E
+fi
+
+mntroot_rw
+rm -f /opt${FLAG_FACTORY_FRESH}
+rm -f $MNTLOG_DC/system/ENABLE_DIAGS
+sync
+
+if [ ${_RES1} -eq 0 ] && [ ${_RES2} -eq 0 ]; then
+	case $HALTIT in
+		0)
+			mntroot_ro
+			# used by update-all script; do nothing
+			;;
+		2)
+			mntroot_ro
+			halt
+			;;
+	   	1)
+			if [ -e /etc/init.d/rpinit ]; then
+				/etc/init.d/rpinit start
+			fi
+
+			rm -rf ${NOT_SHIPPED_FILE}
+
+			touch /opt${FLAG_FACTORY_FRESH}
+			mntroot_ro
+			halt
+			;;
+		*)
+			touch /opt${FLAG_FACTORY_FRESH}
+			sync
+			mntroot_ro
+			clean_reboot
+			;;
+	esac
+fi

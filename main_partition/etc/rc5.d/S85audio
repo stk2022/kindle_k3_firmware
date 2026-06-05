@@ -1,0 +1,83 @@
+#!/bin/sh
+
+export LD_LIBRARY_PATH=/usr/lib/tts/speech/components/common/:/usr/lib/tts
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+DAEMON=/usr/bin/aserver.sh
+NAME=audioServer
+DAEMONUSER=root
+PIDFILE=/var/run/audio.pid
+DESC="audio server"
+CONF_NAME=audioserver
+PMOND_START="lipc-set-prop com.lab126.pmond start "
+PMOND_STOP="lipc-set-prop com.lab126.pmond stop"
+
+_ASOUND=/etc/audio/asound.state
+
+_KERNEL_VERSION=`uname -r`
+_MODULE_BASE=/lib/modules/${_KERNEL_VERSION}
+_AUDIO_BASE=${_MODULE_BASE}/kernel/sound
+
+load_drivers()
+{
+	insmod ${_AUDIO_BASE}/core/snd.ko
+	insmod ${_AUDIO_BASE}/core/snd-timer.ko
+	insmod ${_AUDIO_BASE}/core/snd-page-alloc.ko
+	insmod ${_AUDIO_BASE}/core/snd-pcm.ko
+	insmod ${_AUDIO_BASE}/arm/mxc-alsa-pmic.ko
+}
+
+set_kernel_parameters()
+{
+	echo 10000 > /sys/devices/system/wm8960_power_off_timeout/wm8960_power_off_timeout0/wm8960_power_off_timeout
+}
+
+start_server_up()
+{
+	msg "starting $DESC" I
+	$PMOND_START $CONF_NAME
+}
+
+shut_server_down()
+{
+	msg "stopping $DESC" I
+	$PMOND_STOP $CONF_NAME
+}
+
+initialize_alsa()
+{
+	# initialize the ALSA driver to desired defaults (see /etc/asound.state)
+	msg "initializing audio driver defaults" I
+
+	/usr/sbin/alsactl restore 0
+}
+
+case "$1" in
+
+	start|restart)
+		if is_Mario_Platform; then
+			load_drivers
+		fi
+
+		initialize_alsa
+
+		if is_Luigi_Platform; then
+			set_kernel_parameters
+		fi
+
+		start_server_up
+		;;
+	stop)
+		shut_server_down
+		;;
+	*)
+		msg "Usage: $0 start" W
+		exit 1 
+		;;
+
+esac
+
+exit 0
+

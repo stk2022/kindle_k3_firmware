@@ -1,0 +1,141 @@
+gui.language.0=en
+gui.language.default=en
+gui.language.current=en
+
+gui.playlist_ui.x=0
+gui.playlist_ui.y=0
+gui.playlist_ui.width=600
+gui.playlist_ui.height=64
+gui.playlist_ui.title_prefix.en = Current playlist
+gui.playlist_ui.title.x = 10
+gui.playlist_ui.title.y = 40
+gui.playlist_ui.margin.x = 5
+gui.playlist_ui.margin.y = 5
+gui.playlist_ui.playmode.en = Play modes
+gui.playlist_ui.playmode.y = 42
+
+gui.media_library.x=0
+gui.media_library.y=64
+gui.media_library.width=600
+
+gui.media_library.divider.thickness=5
+gui.media_library.margin.left=0
+
+gui.media_library.footer.height=31
+gui.media_library.title.padding=35
+gui.media_library.title.caption.en=songs
+gui.media_library.page.x = 280
+
+gui.media_library.cell.width=600
+gui.media_library.cell.height=48
+gui.media_library.cell.margin.top=20
+gui.media_library.cell.margin.bottom=25
+gui.media_library.cell.margin.left=25
+gui.media_library.cell.margin.right=40
+
+gui.media_library.cell.title.x=10
+gui.media_library.cell.title.y=25
+gui.media_library.cell.artist.x=200
+gui.media_library.cell.artist.y=25
+gui.media_library.cell.album.x=350
+gui.media_library.cell.album.y=25
+
+gui.media_library.cell.border.thickness=2
+
+gui.media_library.cell.caption.text.line1.y=20
+gui.media_library.cell.caption.text.line2.y=41
+gui.media_library.cell.caption.text.cell1.x=35
+gui.media_library.cell.caption.text.cell2.x=500
+gui.media_library.cell.caption.padding=10
+gui.media_library.cell.caption.title.en=Title
+gui.media_library.cell.caption.artist.en=Artist
+gui.media_library.cell.caption.album.en=Album
+
+gui.media_library.cell.control.text.y=5
+gui.media_library.cell.control.height=20
+gui.media_library.cell.control.padding=10
+gui.media_library.cell.control.up.x=200
+gui.media_library.cell.control.up.width=30
+gui.media_library.cell.control.down.x=300
+gui.media_library.cell.control.down.width=30
+gui.media_library.cell.control.play.x=400
+gui.media_library.cell.control.play.width=30
+
+gui.media_library.cell.index.width=20
+gui.media_library.cell.index.height=20
+
+gui.media_library.cell.checkbox.width=20
+gui.media_library.cell.checkbox.height=20
+
+gui.media_library.cell.track.en=Track
+gui.media_library.page.en=Page
+
+gui.music_detail.x=0
+gui.music_detail.width=600
+gui.music_detail.height=266
+
+#gui.music_detail.metadata_frame.x=44
+gui.music_detail.metadata_frame.y=45
+gui.music_detail.metadata_frame.width=435
+gui.music_detail.metadata_frame.height=120
+
+gui.music_detail.metadata_frame.border1=2
+gui.music_detail.metadata_frame.border2=3
+gui.music_detail.metadata_frame.border3=12
+gui.music_detail.metadata_frame.border4=2
+gui.music_detail.metadata_frame.border5=2
+
+gui.music_detail.progress.divider.width=4
+gui.music_detail.progress.elapsed.x=10
+gui.music_detail.progress.remaining.x=10
+
+gui.music_detail.image.x=8
+gui.music_detail.image.y=10
+gui.music_detail.image.width=100
+
+gui.music_detail.title.x=118
+gui.music_detail.title.y=30
+gui.music_detail.artist.x=118
+gui.music_detail.artist.y=60
+gui.music_detail.album.x=118
+gui.music_detail.album.y=90
+gui.music_detail.trackn.caption.en=Track
+gui.music_detail.trackn.x=220
+gui.music_detail.trackn.y=190
+
+gui.music_detail.prev_song.x=520
+gui.music_detail.prev_song.y=30
+gui.music_detail.seek_back.x=520
+gui.music_detail.seek_back.y=70
+gui.music_detail.play.x=520
+gui.music_detail.play.y=110
+gui.music_detail.seek_forward.x=520
+gui.music_detail.seek_forward.y=150
+gui.music_detail.next_song.x=520
+gui.music_detail.next_song.y=190
+
+gui.music_detail.page_prev.x=5
+gui.music_detail.page_prev.y=195
+gui.music_detail.page_next.x=535
+
+gui.app_menu_bar.kindle_home.en=Home
+gui.app_menu_bar.browse_playlists.en=Browse playlists...
+
+gui.overlay.playlist_browser.title.en = Select playlist
+gui.overlay.playlist_browser.table.x = 26
+gui.overlay.playlist_browser.table.y = 0
+gui.overlay.playlist_browser.table.width = 530
+gui.overlay.playlist_browser.table.height = 580
+gui.overlay.playlist_browser.table.row_height = 48
+gui.overlay.playlist_browser.x = 33
+gui.overlay.playlist_browser.y = 8
+gui.overlay.playlist_browser.decoration_yoffset = 4
+gui.overlay.playlist_browser.width = 560
+gui.overlay.playlist_browser.height = 650
+gui.overlay.playlist_browser.page_info.x = 50
+gui.overlay.playlist_browser.page_info.y = 630
+gui.overlay.playlist_browser.widget.y_offset = 34
+gui.overlay.playlist_browser.widget.x_offset = 10
+gui.overlay.playlist_browser.widget.songs.en = songs
+
+content_handler.max_clip = 40

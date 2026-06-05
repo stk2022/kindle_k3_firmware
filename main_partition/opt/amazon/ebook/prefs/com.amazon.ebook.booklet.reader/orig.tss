@@ -1,0 +1,10 @@
+<stylesheet>
+
+<style _tag="page">
+<rule attr="continue" value="ignore" />
+<rule attr="display" value="block" />
+<rule attr="layout" value="relative" />
+<rule attr="margin" value="0" />
+</style>
+
+</stylesheet>

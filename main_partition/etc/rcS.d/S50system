@@ -1,0 +1,106 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_CFG_FS=/etc/sysconfig/fs
+[ -f ${_CFG_FS} ] && . ${_CFG_FS}
+
+_CFG_SRSTCFG=/etc/sysconfig/srstlog
+[ -f ${_CFG_SRSTCFG} ] && . ${_CFG_SRSTCFG}
+
+set_queue_ra()
+{
+	if [ $# -eq 2 ]; then
+		_RA_MMC_CFG=/sys/block/$1/queue/read_ahead_kb
+		if [ -w ${_RA_MMC_CFG} ]; then
+			echo $2 >${_RA_MMC_CFG}
+		fi
+	fi
+}
+
+set_readahead()
+{
+	set_queue_ra ${RA_ROOT_DEV} ${RA_ROOT_SIZE}
+	set_queue_ra ${RA_SLOT_DEV} ${RA_SLOT_SIZE}
+}
+
+init_srstlog()
+{
+	if [ -n "${SRST_ENABLE}" ]; then
+		if [ -f "${SRST_LOGDIR}/${SRST_LOGNAME}" ]; then
+			cp "${SRST_LOGDIR}/${SRST_LOGNAME}" "${SRST_LOGDIR}/${SRST_LOGNAME_BOOT}" 2>/dev/null
+		fi
+	fi
+}
+
+init_time()
+{
+	hwclock -u -s
+
+	# Sanity check the time.
+	if [ -f /etc/epoch.txt ]; then
+		local _EPOCH=$(cat /etc/epoch.txt)
+		if [ "$(date -u +%s)" -lt "$(date -u +%s -D '%Y-%m-%d %H:%M%Z' -d "${_EPOCH}")" ]; then
+			date -u -D '%Y-%m-%d %H:%M%Z' -s "${_EPOCH}"
+		fi
+	fi
+}
+
+create_dirs()
+{
+	DIRS="/tmp/root /tmp/framework"
+	for DIR in ${DIRS}; do
+		if [ ! -d "$DIR" ]; then
+			mkdir -p $DIR
+		fi
+	done
+}
+
+chmod_stuff()
+{
+		chmod 777 /tmp
+		chmod 700 /tmp/root
+		chown framework:javausers /tmp/framework
+}
+
+case "$1" in
+	start)
+	
+		# create a new homes for everyone
+		create_dirs
+		
+		# set necessary modes and permissions
+		chmod_stuff
+		
+		# generate the loader cache (if it doesn't already exist)
+		local _LD_SO_CACHE_DIR=/var/local/system
+		local _LD_SO_CACHE=${_LD_SO_CACHE_DIR}/ld.so.cache
+		if [ ! -f "${_LD_SO_CACHE}" ]; then
+			msg "initializing shared library cache" I
+			mkdir -p ${_LD_SO_CACHE_DIR}
+			/sbin/ldconfig -C ${_LD_SO_CACHE}
+		fi
+
+		# current ld.so looks for the cache in /var/run/...
+		ln -s ${_LD_SO_CACHE} /var/run
+
+		set_readahead
+		echo anticipatory > /sys/block/${RA_ROOT_DEV}/queue/scheduler
+
+		mount /proc/bus/usb
+		
+		# no clock yet, set the time
+		init_time
+		wait 
+		;;
+
+	*)
+		msg "usage: /etc/init.d/$NAME {start}" W >&2
+		exit 1
+		;;
+
+esac
+
+exit 0
+

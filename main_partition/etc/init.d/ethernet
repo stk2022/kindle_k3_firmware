@@ -1,0 +1,80 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+PIDFILE=/var/run/udhcpc.pid
+
+( is_Mario ) && enet="smc911x"
+( is_ADS ) && enet="cs89x0"
+{ [ "x`grep 'usbnet' /proc/cmdline`" = "x" ] && usbnet="false" ; } || usbnet="true" 
+{ [ "x`grep 'nfsroot' /proc/cmdline`" = "x" ] && netboot="false" ; } || netboot="true" 
+
+ifup_enet()
+{
+    ifconfig eth0 up
+
+    if [ "$netboot" = "false" ]; then
+        _NAME_HACK=`ifconfig eth0 | grep HW | awk '{ print $5; }' | md5sum | cut -b 1-10`
+        udhcpc -c ${_NAME_HACK} -h ${_NAME_HACK} &
+        if [ $? ]; then
+            echo $! >${PIDFILE}
+        fi
+    fi
+}
+
+ifdown_enet()
+{
+    ifconfig eth0 down
+}
+
+case "$1" in
+
+    start)
+        if ( is_ADS ); then
+            modprobe cs89x0 io=0xeb020300
+            ifup_enet
+        elif ( is_Mario ) || ( is_Luigi3 ); then
+            ifup_enet
+        else
+            msg "not enet" I
+        fi
+    
+        if [ "$usbnet" = "true" ]; then
+            modprobe -r g_file_storage
+            modprobe arcotg_udc force_fs=1
+            modprobe g_ether host_addr='EE4900000000' dev_addr='EE1900000000'
+            usbnet_ip=`sed -n -e 's/.*usbnet=\([0-9.]*\).*/\1/p' /proc/cmdline`
+            usbnet_nm=`sed -n -e 's/.*usbnet=[^:]*:\([0-9.]*\).*/\1/p' /proc/cmdline`
+            ifconfig usb0 ${usbnet_ip} netmask ${usbnet_nm}
+        else
+            msg "not usbnet" I
+        fi
+        ;;
+
+   stop)
+        if [ -r ${PIDFILE} ]; then
+            kill_by_pidfile ${PIDFILE}
+            rm -f ${PIDFILE}
+        fi
+        
+        if ( has_Ethernet ); then
+            ifconfig eth0 down
+        fi
+        
+        if [ "$usbnet" = "true" ]; then
+            ifconfig usb0 down
+        fi
+
+        if ( is_ADS ); then
+            rmmod cs89x0
+        fi
+        ;;
+    *)
+        msg "Usage: $0 {start|stop}" W >&2
+        exit 1
+        ;;
+esac
+
+exit 0
+

@@ -1,0 +1,983 @@
+# misc. useful functions/definitions
+
+TRUE=0
+FALSE=1
+
+_FEATURES=/etc/rc.d/features
+[ -f $_FEATURES ] && . $_FEATURES
+
+_STATUS=/etc/rc.d/status
+[ -f $_STATUS ] && . $_STATUS
+
+UFBVNCD=/usr/sbin/ufbvncd
+UFBVNCD_PIDFILE=/var/run/`basename ${UFBVNCD}`.pid
+
+LEGACYD=/usr/sbin/fiona_legacyd
+LEGACYD_PIDFILE=/var/run/`basename ${LEGACYD}`.pid
+
+# For engineering builds, this will become ENGBUILD=1, otherwise, it'll be ENGBUILD=0.
+#
+ENGBUILD=0
+
+RCS_FLAGS_CTRL=/proc/bd/rcs_flags
+RCS_FLAGS_CLEAR=0
+RCS_FLAGS_SYSTEM_STARTUP=1
+RCS_FLAGS_SYSTEM_SHUTDOWN=2
+RCS_FLAGS_VIDEO_STARTUP=4
+RCS_FLAGS_SOFTWARE_UPDATE=8
+
+BOOT_MILESTONE=/proc/bd/boot_milestone
+
+START_FRAMEWORK=/opt/amazon/ebook/bin/start.sh
+FRAMEWORK_STOP_FILE=/tmp/.framework_stop
+FRAMEWORK_EXCEPTION_FILE=/var/run/.framework_error
+FRAMEWORK_REBOOT_COUNT_FILE=/var/local/system/.framework_reboots
+FRAMEWORK_RETRIES_COUNT_FILE=/var/local/system/.framework_retries
+
+INTERNAL_FLAG_FILE=/INTERNAL_FEATURES_ENABLED__DO_NOT_RELEASE
+
+STARTSTOPD=/sbin/start-stop-daemon
+FRAMEWORK=/etc/init.d/framework
+ETHERNET=/etc/init.d/ethernet
+BROWSERD=/usr/bin/browserd
+TINYROT=/usr/sbin/tinyrot
+MNTROOT=/usr/sbin/mntroot
+VIDEO=/etc/init.d/video
+FBSET=/usr/sbin/fbset
+EIPS=/usr/sbin/eips
+PMON=/usr/bin/pmon
+AWK=/usr/bin/awk
+KDB=/usr/bin/kdb
+EU=/usr/sbin/eu
+CVM=cvm
+
+DRIVEMODE_ONLINE=/var/local/system/drivemode_online
+TINYROT_LOCK=/var/lock/tinyrot.lock
+USID=/proc/usid
+
+EINK_PROGRESSBAR_CTRL=/sys/devices/platform/eink_fb.0/progressbar
+EINK_DEBUG_CTRL=/sys/devices/platform/eink_fb.0/eink_debug
+EINK_CLEAR_PROGRESSBAR=101 # ![0..100] clears progressbar
+EINK_PROGRESSBAR_COUNT=/proc/bd/progress_count
+EINK_RW_DIR=/var/local/eink/
+EIPS_CLEAR_STRING="                                "
+EIPS_USID_MSG="Press the Home key to continue"
+MAX_BOOT_PROGRESS=50
+
+PROGRESSBAR_WIDTH=424
+EIPS_X_RES=12
+EIPS_X_LEN=16
+EIPS_Y_RES=20
+EIPS_Y_UPDATE_FAILURE_T=38
+EIPS_Y_UPDATE_FAILURE_N=39
+EIPS_Y_UPDATE_FAILURE=${EIPS_Y_UPDATE_FAILURE_T}
+
+EINK_SCREEN_Y_RES_N=1200
+EINK_SCREEN_X_RES_N=824
+EINK_SCREEN_Y_RES_T=800
+EINK_SCREEN_X_RES_T=600
+
+EINK_ORIENT_PORTRAIT=0
+EINK_ORIENT_PORTRAIT_UPSIDE_DOWN=1
+EINK_ORIENT_LANDSCAPE=2
+EINK_ORIENT_LANDSCAPE_UPSIDE_DOWN=3
+
+EINK_BOOTSTRAP_INFO=/sys/module/eink_fb_hal_broads/parameters/bs_bootstrap
+EINK_PREFLIGHT_INFO=/sys/devices/platform/eink_fb.0/preflight_failure
+EINK_ROM_IS_FLASH=/sys/devices/platform/eink_fb.0/eink_rom_is_flash
+EINK_ORIENTATION_FILE=${EINK_RW_DIR}orientation
+EINK_UPDATE_FILE=${EINK_RW_DIR}update_flash
+EINK_WAKE_FILE=${EINK_RW_DIR}wake_screen
+EINK_BITDEPTH_FILE=${EINK_RW_DIR}bpp
+EINK_VCOM_FILE=${EINK_RW_DIR}vcom
+EINK_USID_FILE=${EINK_RW_DIR}usid
+
+EINK_AMAZON_SCREEN_N=/opt/eink/images/factory_reset_n.png
+EINK_AMAZON_SCREEN_T=/opt/eink/images/factory_reset_t.png
+EINK_AMAZON_SCREEN_S=/opt/eink/images/factory_reset_s.png
+EINK_FLASH_RESTART="/etc/init.d/video start_broads"
+EINK_UPDATE_FLASH="/etc/init.d/video update_flash"
+
+EINK_LIFEGUARD=/opt/eink/scripts/lifeguard
+EINK_LIFEGUARD_PIDFILE=/var/run/`basename ${EINK_LIFEGUARD}`.pid
+
+EINK_PROC=/proc/eink_fb
+EINK_ROM=${EINK_PROC}/eink_rom
+EINK_UPDATE_DISPLAY=${EINK_PROC}/update_display
+EINK_UPDATE_DISPLAY_SCREEN=5
+EINK_UPDATE_DISPLAY_SCREEN_SLEEP=12
+EINK_SET_REBOOT_BEHAVIOR=10
+EINK_REBOOT_SCREEN_ASIS=0
+EINK_SET_PROGRESSBAR_XY=11
+EINK_UPDATE_DISPLAY_ORIENTATION=14
+EINK_SET_SLEEP_BEHAVIOR=16
+EINK_LOWBAT_SCREEN=19
+EINK_REBOOT_SCREEN=20
+EINK_UPDATE_SCREEN_INITIAL=21
+EINK_UPDATE_SCREEN_SUCCESS=22
+EINK_UPDATE_SCREEN_FAILURE=23
+EINK_UPDATE_SCREEN_FAILURE_NO_WAIT=24
+EINK_REPAIR_SCREEN=25
+EINK_BOOT_SCREEN=26
+EINK_POWER_LEVEL=${EINK_PROC}/power_level
+EINK_POWER_LEVEL_ON=0
+EINK_POWER_LEVEL_BLANK=1
+EINK_POWER_LEVEL_STANDBY=2
+EINK_POWER_LEVEL_SLEEP=3
+EINK_POWER_LEVEL_OFF=4
+EINK_ALLOW_SLEEP=0
+EINK_PREVENT_SLEEP=1
+
+EINK_ERR_UNRECOVERABLE=2
+EINK_ERR_RECOVERABLE=1
+
+# Luigi-based moviNAND device partition scheme.
+#
+MOVINAND_DEVICE=/dev/mmcblk0
+
+MOVINAND_OFFSET_PARTITION=0		#0x00000000 Partition Map
+MOVINAND_OFFSET_HEADER=1024		#0x00000400 DCD Header
+MOVINAND_OFFSET_U_BOOT=3072		#0x00000C00 Boot Loader
+MOVINAND_OFFSET_KERNEL=266240	#0x00041000 Linux Kernel
+MOVINAND_OFFSET_ISISWF=3674112	#0x00381000 ISIS Waveform
+MOVINAND_OFFSET_ROOTFS=3936256	#0x003C1000 Root filesystem
+
+# The existence of this file indicates that system was shutdown due to a low batt condition.
+#
+LOW_BATT_FILE="/var/local/system/low_batt"
+
+SHUTDOWN_FRAMEWORK_AMAZON_SCREEN=0
+SHUTDOWN_FRAMEWORK_REBOOT_SCREEN=1
+SHUTDOWN_FRAMEWORK_CLROFF_SCREEN=2
+SHUTDOWN_FRAMEWORK_SCREEN_ASIS=3
+
+WAKE_INPUT_DEVICE="unlock"
+ACCELEROMETER=/proc/accelerometer
+FIVEWAY=/proc/fiveway
+KEYPAD=/proc/keypad
+SCREEN=/dev/fb/0
+
+MSG_SLLVL_D="debug"
+MSG_SLLVL_I="info"
+MSG_SLLVL_W="warn"
+MSG_SLLVL_E="err"
+MSG_SLLVL_C="crit"
+MSG_SLLVL_P="perf"
+MSG_SLNUM_D=0
+MSG_SLNUM_I=1
+MSG_SLNUM_W=2
+MSG_SLNUM_E=3
+MSG_SLNUM_C=4
+MSG_SLNUM_P=5
+MSG_CUR_LVL=/var/local/system/syslog_level
+
+# Misc.
+#
+msg()
+{
+	{ [ "x$3" != "x" ] && str_id="$3:" ; } || str_id="def:"
+	{ [ "x$2" != "x" ] && msg_level="$2" ; } || msg_level="C" 
+	msg_sub=`basename $0`
+	eval msg_sllvl=\${MSG_SLLVL_$msg_level}
+	eval msg_slnum=\${MSG_SLNUM_$msg_level}
+	{ [ -e $MSG_CUR_LVL ] && curLvl=`cat $MSG_CUR_LVL` ; } || curLvl=1
+	if [ $msg_slnum -ge $curLvl ]; then
+		/usr/bin/logger -p local4.$msg_sllvl -t "system" "$msg_level $msg_sub:$str_id$1"
+	fi
+	[ "x$msg_level" != "xD" ] && echo "system: $msg_level $msg_sub:$str_id$1"
+}
+
+msg_setlevel()
+{
+	eval msg_slnum=\${MSG_SLNUM_$1}
+	echo $msg_slnum > $MSG_CUR_LVL
+}
+
+ltpmsg()
+{
+	test_case_name=`basename $0 .sh`
+	error="no"
+	{ [ "x$1" != "x" ] && instance_num="$1" ; } || error="yes"
+	case $instance_num in 
+		*[^0-9]*) 
+			error="yes"
+			;; 
+		*) 
+			# It is an integer; all is well
+		;; 
+	esac 
+	if [ "x$2" == "xPASS" ] || [ "x$2" == "xFAIL" ] || [ "x$2" == "xBROK" ] || [ "x$2" == "xWARN" ] || [ "x$2" == "xRETR" ] || [ "x$2" == "xINFO" ] || [ "x$2" == "xCONF" ]; then
+			status_type="$2"
+		else
+			error="yes"
+		fi
+	{ [ "x$3" != "x" ] && message="$3" ; } || error="yes"
+
+	if [ "$error" = "yes" ]; then
+		echo "$test_case_name 1 BROK : test attempted to send a non-LTP-compliant message; source shell script needs to be fixed"
+	else
+		echo "$test_case_name $instance_num $status_type : $message"
+	fi
+}
+
+ltpperf() 
+{ 
+    if [ "x$2" == "x" ]; then 
+        ltpmsg $1 "BROK" "missing performance test name" 
+    elif [ "x$3" == "x" ]; then 
+        ltpmsg $1 "BROK" "missing unit" 
+    elif [ "x$4" == "x" ]; then 
+        ltpmsg $1 "BROK" "missing value" 
+    else 
+        ltpmsg $1 "INFO" "PERF: $2($3) $4" 
+    fi 
+}
+
+
+read_nor()
+{
+	dd if=/dev/mtd/2 bs=1 count=$2 skip=$1 2>/dev/null
+}
+
+mntroot_rw()
+{
+	if [ -x ${KDB} ]; then
+		MNTROOT_RW=`kdb get system/driver/filesystem/CMD_MOUNTRW`
+		eval ${MNTROOT_RW}
+	fi
+}
+
+mntroot_ro()
+{
+	# Defer switching the rootfs to read-only to the end of the start-up/shut-down sequences.
+	#
+	update_rcs_info
+
+	if [ -x ${KDB} ] && [ ${SYSTEM_STARTUP} -eq 0 ] && [ ${SYSTEM_SHUTDOWN} -eq 0 ]; then
+		MNTROOT_RO=`kdb get system/driver/filesystem/CMD_MOUNTRO`
+		eval ${MNTROOT_RO}
+	fi
+}
+
+boot_milestone()
+{
+	# The boot milestones require a 4-character string.  So, don't do anything
+	# unless we at least get a string at all.
+	#
+	if [ $# -ne 0 ] && [ -n "$1" ]; then
+		
+		# Pad the milestone string with trailing 0's if we get one that's smaller
+		# than 4 characters.
+		#
+		milestone="${1}0000"
+		milestone="`printf "%.4s" $milestone`"
+		
+		echo -n "$milestone" >${BOOT_MILESTONE}
+	fi
+}
+
+start_powerd()
+{
+	/etc/init.d/powerd start
+	
+	# Wait up to 30 seconds for powerd to go into its
+	# active state.
+	#
+	_ACTIVE_RETRIES=30
+	_COUNT=0
+	
+	while [ ${_COUNT} -lt ${_ACTIVE_RETRIES} ]; do
+
+		sleep 1
+		
+		if ( is_PowerD_Active ); then
+			return
+		fi
+		
+		_COUNT=`expr ${_COUNT} + 1`
+		
+	done
+}
+
+stop_powerd()
+{
+	/etc/init.d/powerd stop
+}
+
+stop_all()
+{
+	${PMON} stop all
+}
+
+stop_browserd()
+{
+	if [ -f ${BROWSERD} ]; then
+		browserd=`basename ${BROWSERD}`
+		killall -KILL $browserd 2>/dev/null
+	fi
+}
+
+next_page()
+{
+	if [ -f ${KEYPAD} ]; then
+		if ( is_Luigi_Platform ); then
+			next_page_button=191
+		else
+			next_page_button=124
+		fi
+		
+		echo "send $next_page_button" >${KEYPAD}
+	fi
+}
+
+prev_page()
+{
+	if [ -f ${KEYPAD} ]; then
+		prev_page_button=109
+		echo "send $prev_page_button" >${KEYPAD}
+	fi
+}
+
+wake_input_devices()
+{
+	if [ -f ${FIVEWAY} ]; then
+		echo ${WAKE_INPUT_DEVICE} >${FIVEWAY}
+	fi
+	
+	if [ -f ${KEYPAD} ]; then
+		echo ${WAKE_INPUT_DEVICE} >${KEYPAD}
+	fi
+	
+	if [ -f ${ACCELEROMETER} ]; then
+		echo ${WAKE_INPUT_DEVICE} >${ACCELEROMETER}
+	fi	  
+}
+
+wake_framework()
+{
+	# If the Power Daemon is sleeping, attempt to wake it up by faking a
+	# power-key press.
+	#
+	if ( is_PowerD_Sleeping ); then
+		powerd_test -p
+		sleep 1
+	fi
+	
+	# If the Framework is (still) sleeping, wake the input devices and the screen.
+	#
+	if ( is_Framework_Sleeping ); then
+		wake_input_devices
+		wake_screen
+		sleep 1
+	fi
+}
+
+wait_framework_done_guts()
+{
+	_TERM_RETRIES=5
+	_COUNT=0
+
+	while [ ${_COUNT} -lt ${_TERM_RETRIES} ]; do
+
+		sleep 1
+
+		if [ -z "`pidof ${CVM}`" ]; then
+			return
+		fi
+
+		_COUNT=`expr ${_COUNT} + 1`
+
+	done
+
+	killall -KILL ${CVM} >/dev/null 2>/dev/null
+}
+
+wait_framework_done()
+{
+	${FRAMEWORK} stop
+
+	wait_framework_done_guts
+}
+
+kill_by_pidfile()
+{
+	PIDFILE=$1
+	
+	kill -TERM `cat ${PIDFILE}` >/dev/null 2>/dev/null && sleep 1
+	kill -KILL `cat ${PIDFILE}` >/dev/null 2>/dev/null
+}
+
+update_screen_info()
+{
+	if [ -c ${SCREEN} ]; then
+		SCREEN_X_RES=`${FBSET} | ${AWK} '/geometry/ { print $2 }'`
+		SCREEN_Y_RES=`${FBSET} | ${AWK} '/geometry/ { print $3 }'`
+		SCREEN_DEPTH=`${FBSET} | ${AWK} '/geometry/ { print $6 }'`
+	else
+		SCREEN_X_RES=0
+		SCREEN_Y_RES=0
+		SCREEN_DEPTH=0
+	fi
+	
+	case ${SCREEN_Y_RES} in
+	
+		# Switch to larger size if necessary.
+		#
+		${EINK_SCREEN_Y_RES_N})
+			EIPS_Y_UPDATE_FAILURE=${EIPS_Y_UPDATE_FAILURE_N}
+			;;
+
+	esac
+	
+	if [ -f ${EINK_DEBUG_CTRL} ]; then
+		EINK_DEBUG=`cat ${EINK_DEBUG_CTRL}`
+	else
+		EINK_DEBUG=0
+	fi
+
+	# Use the old panel_size boot-global if progress_count doesn't exist.
+	#
+	if [ ! -f ${EINK_PROGRESSBAR_COUNT} ]; then
+		EINK_PROGRESSBAR_COUNT=/proc/bd/panel_size
+	fi
+}
+
+update_rcs_info()
+{
+	let RCS_FLAGS=0x`cat ${RCS_FLAGS_CTRL}`
+
+	SYSTEM_STARTUP=`echo $((${RCS_FLAGS_SYSTEM_STARTUP}&${RCS_FLAGS}))`
+	SYSTEM_SHUTDOWN=`echo $((${RCS_FLAGS_SYSTEM_SHUTDOWN}&${RCS_FLAGS}))`
+	VIDEO_STARTUP=`echo $((${RCS_FLAGS_VIDEO_STARTUP}&${RCS_FLAGS}))`
+	SOFTWARE_UPDATE=`echo $((${RCS_FLAGS_SOFTWARE_UPDATE}&${RCS_FLAGS}))`
+}
+
+eink_rom_is_flash()
+{
+	# Assume ROM is indeed read-only.
+	#
+	eink_rom_is_flash_result=$FALSE
+	
+	# If the ROM/Flash proc entries are available...
+	#
+	if [ -f "${EINK_ROM}" ] && [ -f "${EINK_ROM_IS_FLASH}" ]; then
+		rom_is_flash=`cat ${EINK_ROM_IS_FLASH}`
+		
+		# ...say it's flash (read/write) when it truly is.
+		#
+		if [ $rom_is_flash -ne 0 ]; then
+			eink_rom_is_flash_result=$TRUE
+		fi
+	fi
+	
+	return $eink_rom_is_flash_result
+}
+
+eink_restart()
+{
+	if [ -f ${VIDEO} ]; then
+		${VIDEO} start_all
+	fi
+}
+
+eink_restart_check()
+{
+	restart_eink=0
+	
+	# If the screen isn't available at all, say we need to restart
+	# the eInk controller.
+	#
+	if [ ! -c ${SCREEN} ]; then
+		restart_eink=1
+	else
+
+		if [ -f ${EINK_BOOTSTRAP_INFO} ]; then
+			eink_bootstrap_info=`cat ${EINK_BOOTSTRAP_INFO}`
+			eink_preflight_info=`cat ${EINK_PREFLIGHT_INFO}`
+			
+			# If we've been artificially put into bootstrapping mode (to keep
+			# the screen as is from the last reboot), then say that we need
+			# to be restarted.
+			#
+			if [ $eink_bootstrap_info -ne 0 ] && [ $eink_preflight_info -eq 0 ]; then
+				restart_eink=1
+			fi
+		fi
+	fi
+
+	# Say that we need to restart the eInk HAL if we're still sleeping at this point.
+	#
+	if [ -f ${EINK_WAKE_FILE} ]; then
+		restart_eink=1
+	fi
+
+	# Go restart eInk if we've determined that's what we need to.
+	#
+	if [ ${restart_eink} -eq 1 ]; then
+		eink_restart
+	fi
+
+	# Update eInk flash if that's what we need to do.
+	#
+	if [ -f ${EINK_UPDATE_FILE} ]; then
+		rm -f ${EINK_UPDATE_FILE}
+		${EINK_UPDATE_FLASH}
+	fi
+}
+
+# Boot progress.
+#
+progress_debug()
+{
+	# If there's something to debug and eInk-debugging is enabled, show whose progress
+	# we're updating.
+	#
+	update_screen_info
+	
+	if [ -n "$1" ] && [ ${EINK_DEBUG} -ne 0 ]; then
+		let eips_x=$(( ((${SCREEN_X_RES}-${PROGRESSBAR_WIDTH})/2)/${EIPS_X_RES} + 2))
+		let eips_y=$(( (${SCREEN_Y_RES}/${EIPS_Y_RES} * 4)/5 + 2))
+		
+		${EIPS} -n $eips_x $eips_y "${EIPS_CLEAR_STRING}"
+		${EIPS} $eips_x $eips_y "$1"
+		
+		msg "RCS_FLAGS = ${RCS_FLAGS}" D
+	fi
+}
+
+update_boot_progress()
+{
+	update_rcs_info
+	
+	# Only draw the boot progressbar when we're starting up and aren't doing a software update.
+	#
+	if [ ${SYSTEM_STARTUP} -ne 0 ] && [ ${SOFTWARE_UPDATE} -eq 0 ] && [ -f ${EINK_PROGRESSBAR_CTRL} ]; then
+		let progress_count=0x`cat ${EINK_PROGRESSBAR_COUNT}`
+		let progress=`cat ${EINK_PROGRESSBAR_CTRL}`
+		
+		# Vacillate between incrementing the progressbar by 1 or 2 based on how many times we've
+		# already tried to update it.
+		#
+		if [ $(($progress_count % 2)) -eq 0 ]; then
+			let progress+=1
+		else
+			let progress+=2
+		fi
+		
+		let progress_count+=1
+		progress_count=`printf "%08X" $progress_count`
+		echo $progress_count >${EINK_PROGRESSBAR_COUNT}
+		
+		# Ensure that starting the Framework up is the last startup-script to
+		# increment the boot progress, and peg the progress to 50% to prevent
+		# overshooting where the Framework is supposed to start.
+		#
+		framework_started=`cat ${FRAMEWORK_STARTED}`
+		
+		if [ $framework_started -ne 1 ] && [ $progress -le ${MAX_BOOT_PROGRESS} ]; then
+			echo $progress >${EINK_PROGRESSBAR_CTRL}
+			progress_debug "$1"
+		fi
+	fi
+}
+
+set_boot_progress()
+{
+	update_rcs_info
+	
+	# Only draw the boot progressbar when we're starting up and aren't doing a software update.
+	#
+	if [ ${SYSTEM_STARTUP} -ne 0 ] && [ ${SOFTWARE_UPDATE} -eq 0 ] && [ -f ${EINK_PROGRESSBAR_CTRL} ]; then
+		let progress=`cat ${EINK_PROGRESSBAR_CTRL}`
+		
+		# Only let the progressbar go up, and not passed 100%.
+		#
+		if [ $1 -ge $progress ] && [ $1 -le 100 ]; then
+			let progress=$1
+		
+			echo $progress >${EINK_PROGRESSBAR_CTRL}
+			progress_debug "$2"
+		fi
+	fi
+}
+
+# Screens.
+#
+display_update_portrait()
+{
+	echo ${EINK_UPDATE_DISPLAY_ORIENTATION} ${EINK_ORIENT_PORTRAIT} >${EINK_UPDATE_DISPLAY}
+	update_screen_info
+}
+
+display_amazon_screen()
+{
+	# If it's not there already, get the display back into its portrait orientation.
+	#
+	display_update_portrait
+
+	# Assume smaller screen size.
+	#
+	if ( is_Luigi_Platform ); then
+	    amazon_screen=${EINK_AMAZON_SCREEN_S}
+	else
+	    amazon_screen=${EINK_AMAZON_SCREEN_T}
+	fi
+	
+	case ${SCREEN_X_RES} in
+	
+		# Switch to larger size if necessary.
+		#
+		${EINK_SCREEN_X_RES_N})
+			amazon_screen=${EINK_AMAZON_SCREEN_N}
+			;;
+
+	esac
+	
+	# Get the factory-reset picture onto the display as cleanly as possible by clearing
+	# the screen first and then issuing a flashing update.
+	#
+	${EIPS} -c
+	${EIPS} -f -g $amazon_screen
+}
+
+display_repair_screen()
+{
+	echo ${EINK_UPDATE_DISPLAY_SCREEN_SLEEP} ${EINK_REPAIR_SCREEN} >${EINK_UPDATE_DISPLAY}
+}
+
+display_lowbat_screen()
+{
+	if [ ! -f ${EINK_WAKE_FILE} ]; then
+		echo ${EINK_UPDATE_DISPLAY_SCREEN_SLEEP} ${EINK_LOWBAT_SCREEN} >${EINK_UPDATE_DISPLAY}
+		touch ${EINK_WAKE_FILE}
+	fi
+}
+
+display_reboot_screen()
+{
+	echo ${EINK_UPDATE_DISPLAY_SCREEN_SLEEP} ${EINK_REBOOT_SCREEN} >${EINK_UPDATE_DISPLAY}
+}
+
+reboot_screen_asis()
+{
+	echo ${EINK_SET_REBOOT_BEHAVIOR} ${EINK_REBOOT_SCREEN_ASIS} >${EINK_UPDATE_DISPLAY}
+}
+
+display_logo_screen()
+{
+	# Note:	Even though the eInk Shim rotates all of the UI splash screens back to
+	#		portrait, it saves and restores the orientation when doing so.  When
+	#		we're putting up the logo screen, we're in a place in the boot process
+	#		where we don't want the orientation going back to landscape if that's
+	#		where it was before the logo screen is put up.
+	#
+	#		So, we explicitly get the display back to the portrait orientation
+	#		BEFORE putting up the logo screen.
+	#
+	display_update_portrait
+	
+	echo ${EINK_UPDATE_DISPLAY_SCREEN} ${EINK_BOOT_SCREEN} >${EINK_UPDATE_DISPLAY}
+	reset_progressbar
+}
+
+display_update_screen_initial()
+{
+	update_rcs_info
+	
+	# Don't put up the initial software-update screen if it's already up because we don't
+	# want the progress bar going backwards.
+	#
+	if [ ${SOFTWARE_UPDATE} -eq 0 ]; then
+		display_update_portrait
+		
+		echo ${EINK_UPDATE_DISPLAY_SCREEN} ${EINK_UPDATE_SCREEN_INITIAL} >${EINK_UPDATE_DISPLAY}
+	fi
+}
+
+display_update_screen_success()
+{
+	echo ${EINK_UPDATE_DISPLAY_SCREEN} ${EINK_UPDATE_SCREEN_SUCCESS} >${EINK_UPDATE_DISPLAY}
+}
+
+display_update_screen_failure()
+{
+	echo ${EINK_UPDATE_DISPLAY_SCREEN} ${EINK_UPDATE_SCREEN_FAILURE} >${EINK_UPDATE_DISPLAY}
+}
+
+display_update_screen_failure_no_wait()
+{
+	echo ${EINK_UPDATE_DISPLAY_SCREEN} ${EINK_UPDATE_SCREEN_FAILURE_NO_WAIT} >${EINK_UPDATE_DISPLAY}
+}
+
+update_progressbar()
+{
+	if [ -f ${EINK_PROGRESSBAR_CTRL} ]; then
+		let progress=`cat ${EINK_PROGRESSBAR_CTRL}`
+		
+		# Only let the progressbar go up, and not passed 100%.
+		#
+		if [ $1 -ge $progress ] && [ $1 -le 100 ]; then
+			let progress=$1
+		
+			echo $progress >${EINK_PROGRESSBAR_CTRL}
+		fi
+	fi
+}
+
+clear_progressbar()
+{
+	if [ -f ${EINK_PROGRESSBAR_CTRL} ]; then
+		echo ${EINK_CLEAR_PROGRESSBAR} >${EINK_PROGRESSBAR_CTRL}
+	fi
+}
+
+reset_progressbar()
+{
+	let progress_count=0
+	let progress=0
+	
+	set_progressbar_xy_to_default_location
+	clear_progressbar
+	
+	echo $progress_count >${EINK_PROGRESSBAR_COUNT}	
+	update_progressbar $progress
+}
+
+set_progressbar_xy_to_default_location()
+{
+	update_screen_info
+	
+	progressbar_y=${SCREEN_Y_RES}+1
+	progressbar_x=0
+	
+	echo ${EINK_SET_PROGRESSBAR_XY} $progressbar_x $progressbar_y >${EINK_UPDATE_DISPLAY}
+}
+
+set_progressbar_xy()
+{
+	progressbar_y=$1
+	progressbar_x=0
+	
+	echo ${EINK_SET_PROGRESSBAR_XY} $progressbar_x $progressbar_y >${EINK_UPDATE_DISPLAY}
+}
+
+sleep_screen()
+{
+	if [ -c ${SCREEN} ]; then
+		echo ${EINK_POWER_LEVEL_SLEEP} >${EINK_POWER_LEVEL}
+	fi
+}
+
+wake_screen()
+{
+	rm -f ${EINK_WAKE_FILE}
+	
+	if [ -c ${SCREEN} ]; then
+		echo ${EINK_POWER_LEVEL_ON} >${EINK_POWER_LEVEL}
+	fi
+}
+
+prevent_screen_sleep()
+{
+	wake_screen
+	
+	if [ -c ${SCREEN} ]; then
+		echo ${EINK_SET_SLEEP_BEHAVIOR} ${EINK_PREVENT_SLEEP} >${EINK_UPDATE_DISPLAY}
+	fi
+}
+
+allow_screen_sleep()
+{
+	if [ -c ${SCREEN} ]; then
+		echo ${EINK_SET_SLEEP_BEHAVIOR} ${EINK_ALLOW_SLEEP} >${EINK_UPDATE_DISPLAY}
+	fi
+}
+
+# VNC daemon and relatives.
+#
+start_ufbvncd()
+{
+	if [ -x "${UFBVNCD}" ]; then
+		${UFBVNCD} &
+		if [ $? ] ; then
+			echo $! >${UFBVNCD_PIDFILE}
+		fi
+	fi
+}
+
+stop_ufbvncd()
+{
+	if [ -r "${UFBVNCD_PIDFILE}" ]; then
+		kill_by_pidfile ${UFBVNCD_PIDFILE}
+	fi
+}
+
+start_vnc()
+{
+	if ( has_Ethernet ) || [ -e /mnt/us/ENABLE_VNC ]; then
+		start_ufbvncd
+	fi
+}
+
+stop_vnc()
+{
+		stop_ufbvncd
+}
+
+# Platform startup/shutdown begin/end.
+#
+platform_startup_begin()
+{
+	update_rcs_info
+	RCS_FLAGS=`echo $((${RCS_FLAGS}|${RCS_FLAGS_SYSTEM_STARTUP}))`
+
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+}
+
+# pass anything as argument 1 if "mntroot_ro" is required
+platform_startup_end()
+{
+	update_rcs_info
+	RCS_FLAGS=`echo $((${RCS_FLAGS}&~${RCS_FLAGS_SYSTEM_STARTUP}))`
+	
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+
+	if [ -n "$1" ] ; then
+		mntroot_ro
+	fi
+}
+
+platform_shutdown_begin()
+{
+	update_rcs_info
+	RCS_FLAGS=`echo $((${RCS_FLAGS}|${RCS_FLAGS_SYSTEM_SHUTDOWN}))`
+	
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+}
+
+platform_shutdown_end()
+{
+	update_rcs_info
+	RCS_FLAGS=`echo $((${RCS_FLAGS}&~${RCS_FLAGS_SYSTEM_SHUTDOWN}))`
+	
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+	mntroot_ro
+}
+
+platform_software_update_begin()
+{
+	update_rcs_info
+	RCS_FLAGS=`echo $((${RCS_FLAGS}|${RCS_FLAGS_SOFTWARE_UPDATE}))`
+	
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+}
+
+platform_software_update_end()
+{
+	update_rcs_info
+	RCS_FLAGS=`echo $((${RCS_FLAGS}&~${RCS_FLAGS_SOFTWARE_UPDATE}))`
+	
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+}
+
+platform_end()
+{
+	RCS_FLAGS=${RCS_FLAGS_CLEAR}
+	
+	echo ${RCS_FLAGS} >${RCS_FLAGS_CTRL}
+}
+
+# System.
+#
+dirty_reboot()
+{
+	platform_end
+	
+	# If the Framework was shut down cleanly, then clear
+	# our boot global to set things up properly for the
+	# next time we boot up.
+	#
+	if ( is_Framework_Stopped ); then
+		echo 0 > ${FRAMEWORK_STOPPED}
+	fi
+	
+	# Do the reboot itself if we're supposed to.
+	#
+	if [ $# -eq 0 ]; then
+		sysreboot --reboot
+	fi
+}
+
+clean_reboot()
+{
+	# For scripts that need to cleanly reboot the system without going through
+	# the normal reboot levels process, they must perform a kernel toggle first.
+	#
+	if [ -e /etc/init.d/kernel_toggle ]; then 
+		/etc/init.d/kernel_toggle stop
+	else
+		msg	"/etc/init.d/kernel_toggle not found" E
+	fi
+
+	dirty_reboot $@
+}
+
+shutdown_framework()
+{
+	shutdown_framework_reboot_screen=$1
+	
+	# Shut the Framwork down without clearing the screen if it's still running.
+	#
+	if ( is_Framework_Running ); then
+		platform_shutdown_begin
+		wait_framework_done
+		platform_shutdown_end
+	fi
+	
+	# Display a screen on reboot if requested.
+	#
+	case $shutdown_framework_reboot_screen in
+		$SHUTDOWN_FRAMEWORK_REBOOT_SCREEN)
+			display_reboot_screen
+			reboot_screen_asis
+			;;
+		
+		$SHUTDOWN_FRAMEWORK_AMAZON_SCREEN)
+			display_amazon_screen
+			sleep_screen
+			reboot_screen_asis
+			;;
+		
+		$SHUTDOWN_FRAMEWORK_CLROFF_SCREEN)
+			${EIPS} -c
+			sleep_screen
+			reboot_screen_asis
+			;;
+		
+		*)
+			;;
+	esac
+}
+
+internal_features_enabled()
+{
+	[ -f $INTERNAL_FLAG_FILE ]
+	return $?
+}
+
+# Usage: is_wlan0_ready
+is_wlan0_ready()
+{
+    local MAC=`ifconfig wlan0 2> /dev/null | awk '$4 == "HWaddr" {print $5}'`
+    case "$MAC" in
+        ''|00:00:00:00:00:00)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# Main.
+#
+update_screen_info
+update_rcs_info

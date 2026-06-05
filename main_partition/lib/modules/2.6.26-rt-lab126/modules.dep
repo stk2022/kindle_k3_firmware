@@ -1,0 +1,29 @@
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/slhc.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/wan/mwan.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_generic.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/slhc.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_async.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_generic.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/slhc.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/wan/mwan.ko /lib/modules/2.6.26-rt-lab126/kernel/lib/crc-ccitt.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_synctty.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_generic.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/slhc.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/wireless/ath6k22.133/ar6000.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_deflate.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/ppp_generic.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/slhc.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/input/keyboard/mxc_keyb.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/input/fiveway/fiveway.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/input/volume/volume.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/input/misc/uinput.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/mon/usbmon.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/core/usbcore.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/core/usbcore.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/arcotg_udc.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/g_file_storage.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/arcotg_udc.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/g_serial.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/arcotg_udc.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/g_ether.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/gadget/arcotg_udc.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/serial/usbserial.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/core/usbcore.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/serial/option.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/serial/usbserial.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/host/ehci-hcd.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/core/usbcore.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/wan/mwan.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/host/ehci-hcd.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/usb/core/usbcore.ko /lib/modules/2.6.26-rt-lab126/kernel/drivers/net/wan/mwan.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal_emu.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal_auo.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal_broads.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal.ko
+/lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/legacy/eink_fb_shim.ko: /lib/modules/2.6.26-rt-lab126/kernel/drivers/video/eink/hal/eink_fb_hal.ko
+/lib/modules/2.6.26-rt-lab126/kernel/lib/crc-ccitt.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/fs/fuse/fuse.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/fs/nls/nls_ascii.ko:
+/lib/modules/2.6.26-rt-lab126/kernel/fs/nls/nls_utf8.ko:

@@ -1,0 +1,38 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_RESET_EINK=/sys/devices/platform/eink_fb.0/reset
+_RESET_EINK_FILE=/tmp/.einkfb_reset_file
+
+# Ensure that the eInk HAL is externally-reset capable.
+#
+if [ -f ${_RESET_EINK} ]; then
+
+    msg "starting eInk HAL lifeguard" I
+
+    # Loop forever.
+    #
+    while [ true ]; do
+        
+        # Wait for the eInk HAL to call us for help...
+        #
+        rm -f ${_RESET_EINK_FILE}
+        mkfifo ${_RESET_EINK_FILE}
+        
+        cat ${_RESET_EINK_FILE} >/dev/null
+    
+        # ...and throw it a lifeline when it has.
+        #
+        if ( is_Framework_Running ); then
+            msg "eInk HAL lifeguard is restarting video" C
+            eink_restart
+        else
+            msg "eInk HAL lifeguard is rebooting device" C
+            dirty_reboot
+        fi
+        
+    done
+
+fi

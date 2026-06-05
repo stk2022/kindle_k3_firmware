@@ -1,0 +1,143 @@
+#! /bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EIPUTS=/usr/sbin/eiputs
+[ -f ${_EIPUTS} ] && . ${_EIPUTS}
+
+_WAIT_USER_INPUT="/test/diags/factory/tools/getkbdserial /dev/input/event0 1000"
+_REBOOT_TEST_COUNT=/var/local/system/.reboot_test_count
+_CLEAN_REBOOT="clean_reboot 1"
+
+_REBOOT_TEST=/mnt/us/ENABLE_REBOOT_TEST
+_FINISH_STARTUP_PROGRESS=100
+_REBOOT_TIMEOUT_TIME=10
+_LOGO_SCREEN=5
+
+clear_screen()
+{
+	${EIPS} -c
+}
+
+logo_screen()
+{
+	${EIPS} -s ${_LOGO_SCREEN}
+}
+
+do_reboot () {
+	# kill the framework and put up the reboot screen
+	shutdown_framework $SHUTDOWN_FRAMEWORK_REBOOT_SCREEN
+
+	${TINYROT} --force
+	hwclock -u -w
+
+	platform_end
+
+	# If the Framework was shut down cleanly, then clear
+	# our boot global to set things up properly for the
+	# next time we boot up.
+	#
+	if is_Framework_Stopped; then
+		echo 0 > ${FRAMEWORK_STOPPED}
+	fi
+
+	sync
+
+	echo
+	echo "Rebooting in 1 second..."
+	echo
+	sleep 1
+	reboot -d -f
+}
+
+reboot_test()
+{
+	if [ -f ${_REBOOT_TEST} ]; then
+		echo "#################################################"
+		echo "Rebooting in 10 seconds.  Hit any key to stop it."
+		echo "#################################################"
+
+		set_boot_progress ${_FINISH_STARTUP_PROGRESS}
+		sleep 1
+
+		clear_screen
+		logo_screen
+
+		puts_init
+		puts -b "~~~~ reboot test ~~~~"
+		puts -b
+		puts -b " rebooting in 10 seconds..."
+		puts	" ...hit any key to stop it"
+
+		# Wait for up to 10 seconds for the user to disable
+		# the reboot test; otherwise, proceed.
+		#
+		start_time=$(date +%s)
+		_DONE=0
+
+		while [ ${_DONE} -eq 0 ]; do
+			_DONT_REBOOT=`${_WAIT_USER_INPUT}`
+
+			# Did the user hit a key?
+			#
+			if [ -n "${_DONT_REBOOT}" ]; then
+				_DONE=1
+			else
+				present_time=$(date +%s)
+				diff=$(($present_time - $start_time))
+
+				# Or did we time out?
+				#
+				if [ $diff -gt ${_REBOOT_TIMEOUT_TIME} ]; then
+					_DONE=1
+				fi
+			fi
+		done
+
+		# If the user didn't disable the reboot test, update the
+		# reboot count and reboot.
+		#
+		if [ -z "${_DONT_REBOOT}" ]; then
+			if [ ! -e ${_REBOOT_TEST_COUNT} ]; then
+				echo 0 >${_REBOOT_TEST_COUNT}
+			else
+				read count <${_REBOOT_TEST_COUNT}
+				let count+=1
+				echo $count >${_REBOOT_TEST_COUNT}
+			fi
+
+			read count <${_REBOOT_TEST_COUNT}
+
+			echo "#################################################"
+			echo "Rebooting:  count = $count"
+			echo "#################################################"
+
+			puts -b
+			puts " rebooting, count = $count"
+
+			${_CLEAN_REBOOT}
+			do_reboot
+		else
+			rm -f ${_REBOOT_TEST_COUNT}
+			rm -f ${_REBOOT_TEST}
+		fi
+	fi
+}
+
+case "$1" in
+	restart|reload|force-reload)
+		msg "argument '$1' not supported" W
+		exit 3
+	;;
+	start)
+		reboot_test
+	;;
+	stop)
+		do_reboot
+	;;
+	*)
+		msg "Usage: $0 {start|stop}" W >&2
+	exit 1
+	;;
+esac

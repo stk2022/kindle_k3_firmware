@@ -1,0 +1,46 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+DAEMON=/usr/bin/powerd
+NAME=powerd
+DAEMONUSER=root
+DESC="Power Management Daemon"
+CONF_NAME=powerd
+PMOND_START="lipc-set-prop com.lab126.pmond start "
+PMOND_STOP="lipc-set-prop com.lab126.pmond stop"
+
+start_it_up()
+{
+
+  echo -n "Starting $DESC: "
+  $PMOND_START $CONF_NAME
+
+}
+
+shut_it_down()
+{
+  echo -n "Stopping $DESC: "
+  $PMOND_STOP $CONF_NAME
+}
+
+case "$1" in
+  start)
+    start_it_up
+  ;;
+  stop)
+    shut_it_down
+  ;;
+  restart|force-reload)
+    shut_it_down
+    sleep 1
+    start_it_up
+  ;;
+  *)
+    echo "Usage: /etc/init.d/$NAME {start|stop|restart|force-reload}" >&2
+    exit 1
+  ;;
+esac
+
+exit 0

@@ -1,0 +1,1591 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   video.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   06/09/08
+#
+#  Copyright (C) 2005-2010 Amazon Technologies
+#
+#  Description:
+#      Mario video HAL layer for video diagnostic scripts.  This file
+#   defines various HAL routines for exercising and testing the video
+#   system and display (Broadsheet / EINK)
+#
+#   This file contains a HAL for the Mario platform, which includes:
+#
+#   Important Constants
+#       WHITE_PATTERN           - ID for all white pattern
+#       G1_PATTERN              - ID for gray shade 1 pattern
+#       ...                     - ID's for gray shades 2-13...
+#       G14_PATTERN             - ID for gray shade 14 pattern
+#       BLACK_PATTERN           - ID for all black pattern
+#       4_SHADES_GRAY_PATTERN   - ID for a blend of 4 shades of
+#                                   gray in a single image
+#       16_SHADES_GRAY_PATTERN  - ID for a blend of 16 shades of
+#                                   gray in a single image
+#       BACKDROP_PATTERN        - Pattern to use for backdrop on tests
+#
+#   Data Structures
+#       IMAGE_PATTERN_LIST      - List of patterns to test for video diagnostic
+#       FULL_IMAGE_PATTERN_LIST - List of all pattern images
+#
+#   Hal Routines
+#       sleep_screen_entry()        - Enter screen saver mode (display image)
+#       sleep_screen_exit()         - Exit screen saver mode (clear image)
+#       get_eink_waveform_version() - Get waveform version from system
+#       get_eink_commands_version() - Get EINK commands version from system
+#       image_pattern_to_label(id)  - return name of pattern matching id
+#       video_draw_pattern(id)      - draw given pattern to screen
+#       display_image()             - display a random image on display
+#       page_flip()                 - page flip until user cancels
+#       display_cancel_test_message - display a cancel screen
+#       video_display_panel_id_verification_failure - screen to show panel id
+#                                       verification failed.       
+#       video_verify_panel_id()     - Verify installed waveform matches panel
+#       video_display_video_info_banner - Display waveform and cmds version screen
+#       video_get_user_verify_parameters    - Ask user to verify waveform and
+#                                               commands versions are correct
+#       video_set_vcom_set()        - Remember vcom has been set
+#       video_get_vcom_set()        - Return whether vcom has been set
+#       video_get_vcom()            - Set VCOM_SETTING with current vcom setting
+#       video_vcom_user_done_yet()  - Screen for user ack when vcom has been set
+#       do_check_enable_vcom()      - Verify system support available for vcom adjust
+#       do_enable_vcom()            - Tell system to enable vcom
+#       do_disable_vcom()           - Tell system to disable vcom
+#       video_enable_vcom_power()   - Verify system support available, then enable VCOM
+#       video_do_adjust_vcom()      - Run user through vcom adjust process
+#       video_verify_waveform()     - Asks user to verify waveform is valid
+#       video_verify_commands()     - Asks user to verify commands is valid
+#       video_do_update_waveform()  - update EINK waveform
+#       video_ask_to_update_waveform- ask user if they want to flash waveform   
+#       video_do_verify_panel_id()  - Verify panel id matches waveform.
+#       video_verify_parameters()   - verify waveform, commands, etc
+#       video_do_eye_one_test()     - Run the eye-one test (not supported here yet)
+#       video_hal_init(void)        - Hal initialization routine
+#       video_hal_exit(void)        - Hal teardown routine
+#
+######################################################################
+
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+# barcode_to_panel_id() and waveform_version_to_panel_id() 
+[ -f "/usr/sbin/idme_functions" ] && . "/usr/sbin/idme_functions"
+
+# USB Hal for exporting USB volume for waveform flashing
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+#
+# Video waveform holding file
+#
+export VIDEO_WAVEFORM_TEMP_FILE_DIR="/tmp"
+
+#
+# Test Image Fill Values...
+#
+export WHITE_PATTERN=0
+export G1_PATTERN=17
+export G2_PATTERN=34
+export G3_PATTERN=51
+export G4_PATTERN=68
+export G5_PATTERN=85
+export G6_PATTERN=102
+export G7_PATTERN=119
+export G8_PATTERN=136
+export G9_PATTERN=153
+export G10_PATTERN=170
+export G11_PATTERN=187
+export G12_PATTERN=204
+export G13_PATTERN=221
+export G14_PATTERN=238
+export BLACK_PATTERN=255
+
+#
+# EIPS pattern mode smears a byte, 
+# so max number for a "pattern" is 255
+#
+export EIPS_MAX_PATTERN=255 
+
+#
+# Special image/pattern types
+#
+export SHADES_16_GRAY_PATTERN=256
+export SHADES_4_GRAY_PATTERN=257
+
+#
+# On Mario, we'll put up 16 grays image prior to putting up
+#   solid image to make it more apparent which level of
+#   gray we're going to
+#
+export BACKDROP_PATTERN=$SHADES_16_GRAY_PATTERN
+
+#
+# Amount of time in mSec to wait allowing user to cancel
+# video test...
+#
+export VIDEO_CANCEL_MESSAGE_DELAY=3000
+
+#
+# Amount of time in sec to delay after putting backdrop screen up
+# before displaying the next pattern/image...
+#
+POST_BACKDROP_DELAY=1
+
+
+#
+# List of all possible pattern images
+#
+FULL_IMAGE_PATTERN_LIST="$SHADES_16_GRAY_PATTERN $WHITE_PATTERN $G1_PATTERN $G2_PATTERN $G3_PATTERN $G4_PATTERN $G5_PATTERN $G6_PATTERN $G7_PATTERN $G8_PATTERN $G9_PATTERN $G10_PATTERN $G11_PATTERN $G12_PATTERN $G13_PATTERN $G14_PATTERN $BLACK_PATTERN"
+
+
+#
+# Lists of patterns to test on this device
+#
+export IMAGE_PATTERN_LIST="$SHADES_16_GRAY_PATTERN $WHITE_PATTERN $G7_PATTERN $BLACK_PATTERN"
+
+
+#
+# Video driver magic numbers
+#
+_SLEEP_SCREEN_ENTRY=9
+_SLEEP_SCREEN_EXIT=4
+_SLEEP_SCREEN_LOGO=5
+_SLEEP_SCREEN_BOOT_TREE=26
+
+_RUNNING_DIAGS_CTRL=/sys/devices/platform/eink_fb.0/running_diags
+
+
+# VCOM Support
+#
+_EINK_PROC=/proc/eink_fb
+_EINK_REG=${_EINK_PROC}/eink_reg
+_VCOM_REG=0232
+_VCOM_START_VAL=0101
+_VCOM_STOP_VAL=0000
+_VCOM_CANCEL_TIMEOUT=1000
+
+_EINK_ROM=${_EINK_PROC}/eink_rom
+_EINK_WAVEFORM_VERSION=${_EINK_PROC}/waveform_version
+_EINK_COMMANDS_VERSION=${_EINK_PROC}/commands_version
+_EINK_UPDATE_DISPLAY=${_EINK_PROC}/update_display
+_EINK_POWER_LEVEL=${_EINK_PROC}/power_level
+
+_WAVEFORM_EINK_VERSION=
+_COMMANDS_EINK_VERSION=
+
+_EINK_POWER_LEVEL_ON=0
+_EINK_POWER_LEVEL_BLANK=1
+_EINK_POWER_LEVEL_STANDBY=2
+_EINK_POWER_LEVEL_SLEEP=3
+_EINK_POWER_LEVEL_OFF=4
+
+_POWER_TIMER_DELAY=`cat /sys/devices/platform/eink_fb.0/power_timer_delay`
+
+_EINK_OVERRIDE_UPD_MODE_CTRL=/sys/devices/platform/eink_fb.0/override_upd_mode
+_UPD_MODE_INIT=0 # Forces no override.
+_UPD_MODE_MU=1 # Apollo->BS: DU
+_UPD_MODE_GU=2 # Apollo->BS: GC4
+_UPD_MODE_GC=3 # Apollo->BS: GC16 
+
+_EINK_UPDATE_DISPLAY_CLS=0
+_EINK_UPDATE_DISPLAY_FULL=2
+_EINK_RESTORE_DISPLAY=15
+
+_FX_UPDATE_PART=0
+_FX_UPDATE_FULL=1
+
+export VIDEO_WAVEFORM_VALID=0
+export VIDEO_CMDS_VALID=0
+export VIDEO_WAVEFORM_VALID_LOADED=0
+export VIDEO_CMDS_VALID_LOADED=0
+
+restore_display_full_gc4()
+{
+    echo ${_UPD_MODE_GU} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_RESTORE_DISPLAY} ${_FX_UPDATE_FULL} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+update_display_full_gc4()
+{
+    echo ${_UPD_MODE_GU} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_UPDATE_DISPLAY_FULL} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+clear_display_full_gc4()
+{
+    echo ${_UPD_MODE_GU} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_UPDATE_DISPLAY_CLS} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+restore_display_full_gc16()
+{
+    echo ${_UPD_MODE_GC} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_RESTORE_DISPLAY} ${_FX_UPDATE_FULL} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+update_display_full_gc16()
+{
+    echo ${_UPD_MODE_GC} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_UPDATE_DISPLAY_FULL} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+clear_display_full_gc16()
+{
+    echo ${_UPD_MODE_GC} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_UPDATE_DISPLAY_CLS} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+
+######################################################################
+# Function:     sleep_screen_entry
+# Purpose:      Enter screen saver mode (displays next screen saver
+#               image).  Sends the command to the EINK driver, and it
+#               displays the next image.
+# Paramters:    none
+# Returns:      none
+######################################################################
+sleep_screen_entry()
+{
+    ${DOUT} -s ${_SLEEP_SCREEN_ENTRY}
+}
+
+
+######################################################################
+# Function:     sleep_screen_exit
+# Purpose:      Exit screen saver mode.
+# Paramters:    none
+# Returns:      none
+######################################################################
+sleep_screen_exit()
+{
+    ${DOUT} -s ${_SLEEP_SCREEN_EXIT}
+}
+
+
+######################################################################
+# Function:     get_eink_waveform_version
+# Purpose:      Get the EINK waveform version from the system
+# Paramters:    none
+# Returns:      none
+# Side Effects: Sets _WAVEFORM_EINK_VERSION to the waveform returned
+######################################################################
+get_eink_waveform_version()
+{
+    export _WAVEFORM_EINK_VERSION="`cat ${_EINK_WAVEFORM_VERSION}`"
+}
+
+
+######################################################################
+# Function:     get_eink_commands_version
+# Purpose:      Get the EINK commands version from the system
+# Paramters:    none
+# Returns:      none
+# Side Effects: Sets _COMMANDS_EINK_VERSION to commands version returned
+######################################################################
+get_eink_commands_version()
+{
+    _COMMANDS_EINK_VERSION="`cat ${_EINK_COMMANDS_VERSION}`"
+}
+
+
+
+######################################################################
+# Function:    image_pattern_to_label
+# Purpose:     Passed an image value, returns a test string associated
+#               with that pattern mode for use in dialogs/strings.
+# Paramters:   pattern - one of:
+#                   $WHITE_PATTERN
+#                   $G1_PATTERN
+#                   $G2_PATTERN
+#                   $G3_PATTERN
+#                   $G4_PATTERN
+#                   $G5_PATTERN
+#                   $G6_PATTERN
+#                   $G7_PATTERN
+#                   $G8_PATTERN
+#                   $G9_PATTERN
+#                   $G10_PATTERN
+#                   $G11_PATTERN
+#                   $G12_PATTERN
+#                   $G13_PATTERN
+#                   $G14_PATTERN
+#                   $BLACK_PATTERN
+#                   $SHADES_16_GRAY_PATTERN 
+#                   $SHADES_4_GRAY_PATTERN
+# Returns:     string representing pattern image
+# Assumptions: none
+# Side Effect: none
+######################################################################
+image_pattern_to_label()
+{
+    case "$1" in
+        $WHITE_PATTERN)
+            echo "White"
+            ;;
+        $G1_PATTERN)
+            echo "Gray 1"
+            ;;
+        $G2_PATTERN)
+            echo "Gray 2"
+            ;;
+        $G3_PATTERN)
+            echo "Gray 3"
+            ;;
+        $G4_PATTERN)
+            echo "Gray 4"
+            ;;
+        $G5_PATTERN)
+            echo "Gray 5"
+            ;;
+        $G6_PATTERN)
+            echo "Gray 6"
+            ;;
+        $G7_PATTERN)
+            echo "Gray 7"
+            ;;
+        $G8_PATTERN)
+            echo "Gray 8"
+            ;;
+        $G9_PATTERN)
+            echo "Gray 9"
+            ;;
+        $G10_PATTERN)
+            echo "Gray 10"
+            ;;
+        $G11_PATTERN)
+            echo "Gray 11"
+            ;;
+        $G12_PATTERN)
+            echo "Gray 12"
+            ;;
+        $G13_PATTERN)
+            echo "Gray 13"
+            ;;
+        $G14_PATTERN)
+            echo "Gray 14"
+            ;;
+        $BLACK_PATTERN)
+            echo "Black"
+            ;;
+        $SHADES_16_GRAY_PATTERN)
+            echo "16 Grays"
+            ;;
+        $SHADES_4_GRAY_PATTERN)
+            echo "4 Grays"
+            ;;
+        *)
+            echo "Unknown"
+            ;;
+    esac
+}
+
+
+
+######################################################################
+# Function:    video_draw_pattern
+# Purpose:     Draws a pattern (one of total number of grays supported)
+#               on the screen based on the bit pattern passed in.
+# Paramters:   pattern - decimal number representing byte pattern to 
+#                       write to the video buffer
+# Returns:     none
+# Assumptions: DOUT tool supports the "-p" option
+# Side Effect: changed video buffer, writes to screen
+######################################################################
+video_draw_pattern()
+{
+    PATTERN="$1"
+    PNAME=`image_pattern_to_label "$PATTERN"`
+    vmsg "video_draw_pattern($PNAME)"
+
+    # First, draw the backdrop
+    case "$BACKDROP_PATTERN" in
+        $SHADES_16_GRAY_PATTERN)
+            echo 101 > /proc/eink_fb/update_display
+            ;;
+        $SHADES_4_GRAY_PATTERN)
+            # To Be Implemented
+            ;;
+        *)
+            if [ $BACDROP_PATTERN -le $EIPS_MAX_PATTERN ]; then
+                ${DOUT} -p "$BACDROP_PATTERN"
+            fi
+            ;;
+    esac
+    sleep $POST_BACKDROP_DELAY
+
+    # Now draw the pattern if it's an EIPS pattern (i.e. not multi-shades-of-gray)
+    if [ $PATTERN -le $EIPS_MAX_PATTERN ]; then
+        ${DOUT} -p "$PATTERN"
+    fi
+}
+
+
+######################################################################
+# Function:     display_image_pre_tn
+# Purpose:      Display a screen saver image for a given amount of time.
+#               This version uses an older method for the pre-TN source 
+#               bases.
+# Paramters:    DELAY - delay in seconds to leave screen saver up for.
+# Returns:      none
+######################################################################
+display_image_pre_tn()
+{
+    DELAY="$1"
+    sleep_screen_entry
+    sleep $DELAY
+    sleep_screen_exit
+}
+
+
+######################################################################
+# Function:     display_image
+# Purpose:      Display a screen saver image for a given amount of time.
+#               This version uses a new method for the TN source base
+# Paramters:    DELAY - delay in seconds to leave screen saver up for.
+# Returns:      none
+######################################################################
+display_image()
+{
+    ${DOUT} -s $2
+    sleep $1
+}
+
+
+######################################################################
+# Function:     page_flip
+# Purpose:      Flip pages until the user stops the test.
+# Paramters:    _DELAY - delay in seconds to leave screen saver up for.
+#               _NAME  - Name of test running
+# Returns:      none
+######################################################################
+page_flip()
+{
+    #
+    # Start Page Flipping part of test...
+    #
+    _DELAY="$1"
+    _NAME="$2"
+    vmsg "Starting page flip script with $_DELAY-second delay between pages."
+    DONE=0
+    _CUR_SCREEN=${_SLEEP_SCREEN_LOGO}
+
+    while [ $DONE -eq 0 ]; do
+        # Display screen 1
+        display_image ${_DELAY} ${_CUR_SCREEN}
+
+        # See if user wants to quit
+        display_cancel_test_message ${VIDEO_CANCEL_MESSAGE_DELAY} "${_NAME}"
+        DONE=$?
+
+        # Toggle between the two screens
+        if [ $DONE -eq 0 ]; then
+            if [ ${_CUR_SCREEN} -eq ${_SLEEP_SCREEN_LOGO} ]; then
+                export _CUR_SCREEN=${_SLEEP_SCREEN_BOOT_TREE}
+            else
+                export _CUR_SCREEN=${_SLEEP_SCREEN_LOGO}
+            fi
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     display_cancel_test_message
+# Purpose:      Display a message for a caller-specified period of time 
+#               allowing operator to cancel the test in progress.
+# Paramters:    _TIMEOUT - Time in mSec to wait for operator response
+#               TEST_NAME - Name of the test running
+# Returns:      0 - Operator did not cancel test
+#               1 - Operator wants to cancel test
+######################################################################
+display_cancel_test_message()
+{
+    _TIMEOUT="$1"
+    TEST_NAME="$2"
+    clear_screen
+    ${DOUT} -n 12 4 "$TEST_NAME"
+    ${DOUT} -n 10 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} 10 8 "Press $SUCCESS_KEY_LABEL now to stop the test."
+
+    # Get the key request
+    DONE=0
+    CANCEL=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT ${_TIMEOUT}`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            #
+            # Process key request
+            case "$KEY" in
+
+                $SUCCESS_KEY)
+                    DONE=1
+                    CANCEL=1
+                    ;;
+
+                *)
+                    vmsg "Wrong key $Key pressed"
+                    ;;
+
+            esac
+        else
+            vmsg "Key not found - timed out"
+            DONE=1
+        fi
+    done
+    return $CANCEL;
+}
+
+
+######################################################################
+# Function:     video_display_panel_id_verification_failure
+# Purpose:      Display a screen showing that the panel id verification
+#               failed.  Show operator the values read from the ROM
+#               (waveform) and that read from the system, indicating they
+#               don't match.
+# Paramters:    WAVEFORM_ID - waveform id read from EINK ROM
+#               PANEL_ID - id of panel read from system
+# Returns:      none
+######################################################################
+video_display_panel_id_verification_failure()
+{
+    WAVEFORM_ID="$1"
+    PANEL_ID="$2"
+    clear_screen
+    banner="EINK Panel ID Verification"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 5 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 5 5 "$base"
+    banner="FAILED"
+    center_text "$banner" 5 "$base"
+    ${DOUT} -n $? 9 "FAILED"
+    ${DOUT} -n 2 7 "Panel ID    : ${PANEL_ID}"
+    ${DOUT} -n 2 9 "Waveform ID : ${WAVEFORM_ID}"
+    ${DOUT} -n 2 13 "ERROR: Waveform not correct for this panel."
+    ${DOUT} 13 17 "Press $EXIT_KEY_LABEL to continue."
+    wait_for_key $EXIT_KEY
+}
+
+
+##########################################################################
+# Function:     video_verify_panel_id
+# Purpose:      Reads the waveform version from the ROM chip and compares
+#               that to the panel_id that the system believes should be
+#               there, returning the comparison result.
+# Paramters:    none
+# Returns:      0 - EINK waveform and panel_id match
+#               1 - Waveform does not match panel_id
+# Assumptions:  /proc/panel_id holds what system thinks panel_id is
+#               /proc/eink_fb/waveform_version holds ROM-based panel_id
+# Side Effects: Echos status to console in event of validation failure.
+#               Displays a failure dialog requiring user to acknowledge.
+##########################################################################
+video_verify_panel_id()
+{
+    # If panel id verification is disabled, return a success result code, we treat it as
+    # a successful panel id verification
+    if [ -n "$DISABLE_VIDEO_PANEL_ID_CHECK" ] && [ $DISABLE_VIDEO_PANEL_ID_CHECK -ne 0 ]; then
+        return 0
+    fi
+
+    # Verify panel id matches that in the waveform
+    get_waveform_panel_id
+    get_barcode_panel_id
+
+    # Verify the panel_id matches
+    if [ "$WAVEFORM_PANEL_ID" == "$BARCODE_PANEL_ID" ]; then
+        success "Panel ID Verification"
+        return 0
+    else
+        # if panel_id doesn't match, waveform is not valid
+        export VIDEO_WAVEFORM_VALID=0
+        failure "Panel ID Verification ($WAVEFORM_PANEL_ID != $BARCODE_PANEL_ID)"
+        video_display_panel_id_verification_failure "$WAVEFORM_PANEL_ID" "$BARCODE_PANEL_ID"
+        return 1
+    fi
+}
+
+
+#########################################################################
+# Function:     video_display_video_info_banner
+# Purpose:      Displays a "banner" on the top of the screen containing
+#               waveform version and commands version for the Broadsheet
+#               controller.
+#
+#               This routine returns control with the banner occupying
+#               through line 9 on the display (i.e. first empty line
+#               is line 10).
+# Paramters:    none
+# Returns:      1 - Panel ID verify failed, dialog already displayed & ack
+#               0 - Panel ID verified correct, video banner on screen
+# Assumptions:  none
+# Side Effect:  Clears the screen, then prints a banner in first 9 lines
+#               on the device's display screen...
+########################################################################
+video_display_video_info_banner()
+{
+    # Verify ROM panel_id and system panel_id match
+    video_verify_panel_id
+    if [ "$?" -eq 1 ]; then
+        return 1
+    fi
+
+    # Get the information
+    get_eink_waveform_version
+    get_eink_commands_version
+    clear_screen
+    banner="Video Component Information"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    banner="Waveform Version"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 7 "$banner"
+    banner="${_WAVEFORM_EINK_VERSION}"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 9 "$banner"
+
+    banner="Commands Version"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 13 "$banner"
+    banner="${_COMMANDS_EINK_VERSION}"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 15 "$banner"
+    banner="Waveform version matches expected Panel ID."
+    center_text "$banner" 8 "$base"
+    ${DOUT} $? 19 "$banner"
+    return 0
+}
+
+
+######################################################################
+# Function:     video_get_user_verify_parameters
+# Purpose:      Verify that the waveform and command versions are
+#               correct.
+# Paramters:    none
+# Returns:      0 - Panel information valid
+#               1 - Panel information is NOT valid
+#               2 - Operator canceled
+# Assumptions:  none
+# Side Effect:  none
+######################################################################
+video_get_user_verify_parameters()
+{
+    # Display information to user, ask them to verify....
+    video_display_video_info_banner
+    panel_id_verify_failed="$?"
+    if [ "$panel_id_verify_failed" -eq 1 ]; then
+        return 1
+    fi
+    ${DOUT} -n 2 23 "Press $SUCCESS_KEY_LABEL if the information is correct."
+    ${DOUT} -n 2 25 "Press $FAILURE_KEY_LABEL if the information is NOT correct."
+    ${DOUT} 2 27 "Press $EXIT_KEY_LABEL to exit video diagnostics."
+
+    # Get the key request
+    DONE=0
+    RESULT=1
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            #
+            # Process key request
+            case "$KEY" in
+
+                $SUCCESS_KEY)
+                    DONE=1
+                    RESULT=0
+                    export VIDEO_WAVEFORM_VALID=1
+                    export VIDEO_CMDS_VALID=1
+                    export VIDEO_WAVEFORM_VALID_LOADED=1
+                    export VIDEO_CMDS_VALID_LOADED=1
+                    ;;
+
+                $EXIT_KEY)
+                    DONE=1
+                    RESULT=2
+                    export VIDEO_WAVEFORM_VALID=0
+                    export VIDEO_CMDS_VALID=0
+                    export VIDEO_WAVEFORM_VALID_LOADED=1
+                    export VIDEO_CMDS_VALID_LOADED=1
+                    ;;
+
+                $FAILURE_KEY)
+                    DONE=1
+                    RESULT=1
+                    export VIDEO_WAVEFORM_VALID=0
+                    export VIDEO_CMDS_VALID=0
+                    export VIDEO_WAVEFORM_VALID_LOADED=1
+                    export VIDEO_CMDS_VALID_LOADED=1
+                    ;;
+
+                *)
+                    vmsg "Wrong key $Key pressed"
+                    ;;
+
+            esac
+        else
+            vmsg "Key not found in video_verify_waveform()"
+            DONE=1
+        fi
+    done
+
+    return $RESULT;
+}
+
+
+######################################################################
+# Function:     video_set_vcom_set
+# Purpose:      Set a flag to indicate we've set vcom.
+# Paramters:    0 - vcom not set
+#               1 - vcom set
+# Returns:      none
+# Side Effect:  sets VCOM_SET global
+######################################################################
+video_set_vcom_set()
+{
+    export VCOM_SET="$1"
+}
+
+
+######################################################################
+# Function:     video_get_vcom_set
+# Purpose:      Return whether we've set vcom.
+# Paramters:    none
+# Returns:      0 - vcom not set
+#               1 - vcom set
+######################################################################
+video_get_vcom_set()
+{
+    return $VCOM_SET
+}
+
+
+######################################################################
+# Function:     video_get_vcom
+# Purpose:      Get the device's VCOM setting and put it in VCOM_SETTING
+# Paramters:    none
+# Returns:      none
+# Side Effects: Sets VCOM_SETTING global with vcom value
+######################################################################
+video_get_vcom()
+{
+    export VCOM_SETTING=`cat $VIDEO_VCOM_SETTING_ENTRY`
+}
+
+
+######################################################################
+# Function:     video_get_panel_id
+# Purpose:      Get the panel id from the system
+# Paramters:    none
+# Returns:      none
+# Side Effects: Sets DEVICE_PANEL_ID
+######################################################################
+video_get_panel_id()
+{
+    if [ -f "$DEVICE_PANEL_ID_ENTRY" ]; then
+        export DEVICE_PANEL_ID=`cat $DEVICE_PANEL_ID_ENTRY`
+    else
+        export DEVICE_PANEL_ID="uninitialized"
+    fi
+}
+
+
+######################################################################
+# Function:     video_vcom_user_done_yet
+# Purpose:      Display a screen asking user to acknowledge once vcom 
+#               has been set, or allowing them to abort if they wish.
+# Paramters:    none
+# Returns:      1 - test complete
+######################################################################
+video_vcom_user_done_yet()
+{
+    # Ask user to hit cancel when they're done
+    clear_screen
+    ${DOUT} -n 16 4 "VCOM Adjustment"
+    ${DOUT} -n 5 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 5 7 "Adjust the VCOM voltage now."
+    ${DOUT} -n 5 10 "Press $SUCCESS_KEY_LABEL once VCOM has been set."
+    ${DOUT} 5 12 "Press $EXIT_KEY_LABEL to abort setting VCOM."
+    DONE=0
+    VCOM_SET=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT ${_VCOM_CANCEL_TIMEOUT}`
+        if [ "$?" -eq 0 ]; then
+            case "$KEY" in
+                $SUCCESS_KEY)
+                    video_set_vcom_set 1
+                    ALL_DONE=1
+                    DONE=1
+                    ;;
+                $EXIT_KEY)
+                    video_set_vcom_set 0
+                    ALL_DONE=1
+                    DONE=1
+                    ;;
+                *)
+                    ;;
+            esac
+        else
+            DONE=1
+        fi
+    done;
+    return $ALL_DONE
+}
+
+
+######################################################################
+# Function:     do_check_enable_vcom
+# Purpose:      Verify that we have the _EINK_REG in the system that is
+#               needed to adjust VCOM.  If we don't, display error 
+#               screen informing operator that we can't adjust VCOM 
+#               because we cannot find the _EINK_REG needed in the 
+#               system to do so.
+# Paramters:    none
+# Returns:      0 - OK to set VCOM, all required support is available
+#               1 - VCOM set support verification failed
+######################################################################
+do_check_enable_vcom()
+{
+    if ! [ -f ${_EINK_REG} ]; then
+        clear_screen
+        ${DOUT} -n 16 4 "VCOM Adjustment"
+        ${DOUT} -n 5 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 5 7 "ERROR - Can not adjust VCOM."
+        ${DOUT} -n 5 9 "Can not find $_EINK_REG."
+        ${DOUT} 5 13 "Press $EXIT_KEY_LABEL now to abort adjusting VCOM."
+        wait_for_key $EXIT_KEY
+        return 1
+    fi
+    return 0
+}
+
+
+######################################################################
+# Function:     do_enable_vcom
+# Purpose:      Instruct EINK driver to enable vcom.
+# Paramters:    status - inform user of status via echo
+#                   0 - Don't echo status
+#                   1 - Echo status
+# Returns:      0 - vcom enabled
+######################################################################
+do_enable_vcom()
+{
+    # Write the vcom register
+    echo ${_VCOM_REG} ${_VCOM_START_VAL} >${_EINK_REG}
+    if [ $1 -eq 1 ]; then
+        echo "Enabled vcom"
+    fi
+    return 0
+}
+
+
+######################################################################
+# Function:     do_disable_vcom
+# Purpose:      Instruct EINK driver to disable vcom.
+# Paramters:    status - inform user of status via echo
+#                   0 - Don't echo status
+#                   1 - Echo status
+# Returns:      0 - vcom disabled
+######################################################################
+do_disable_vcom()
+{
+    echo ${_VCOM_REG} ${_VCOM_STOP_VAL} >${_EINK_REG}
+    if [ $1 -eq 1 ]; then
+        echo "Disabled vcom"
+    fi
+    return 0
+}
+
+
+######################################################################
+# Function:     video_enable_vcom_power
+# Purpose:      Verify that the needed support is available, and then
+#               enable the VCOM power rails.
+# Paramters:    none
+# Returns:      0 - VCOM enabled
+#               1 - VCOM was not enabled - system support missing
+######################################################################
+video_enable_vcom_power()
+{
+    # Make sure vcom adjustment mechanism is present
+    do_check_enable_vcom
+    if [ "$?" -ne 0 ]; then
+        return 1
+    fi
+
+    # Write the vcom register
+    do_enable_vcom 0
+}
+
+
+######################################################################
+# Function:     video_do_adjust_vcom
+# Purpose:      Puts the device into a mode where VCOM can be adjusted.
+#               Operator must dismiss screen before routine exits
+#               (i.e. vcom adjustment is done when function returns).
+# Paramters:    none
+# Returns:      0 - VCOM adjusted
+#               1 - VCOM was not adjusted
+######################################################################
+video_do_adjust_vcom()
+{
+    # Make sure vcom adjustment mechanism is present
+    do_check_enable_vcom
+    if [ "$?" -ne 0 ]; then
+        return 1
+    fi
+
+    # Tell user what's going on
+    clear_screen
+    ${DOUT} -n 16 4 "VCOM Adjustment"
+    ${DOUT} -n 5 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 5 7 "We are going to adjust VCOM now."
+    ${DOUT} -n 5 9 "The screen will toggle between a black and"
+    ${DOUT} -n 5 11 "white screen, with a cancel screen in between"
+    ${DOUT} -n 5 13 "for operator to end screen updating once"
+    ${DOUT} -n 5 15 "the VCOM adjustment is complete."
+    ${DOUT} -n 5 19 "Press $SUCCESS_KEY_LABEL to start VCOM adjustment."
+    ${DOUT} 5 21 "Press $EXIT_KEY_LABEL to abort adjusting VCOM."
+    DONE=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                DONE=1
+                ;;
+            $EXIT_KEY)
+                video_set_vcom_set 0
+                return 1
+                ;;
+            *)
+                ;;
+        esac
+    done
+
+    # Write the vcom register
+    do_enable_vcom 1
+
+    # Keep the video busy while operator adjusts VCOM
+    NEXT_VCOM_PATTERN=0
+    ALL_DONE=0
+    while [ $ALL_DONE -ne 1 ]; do
+        # Paint video
+        ${EIPS} -p $NEXT_VCOM_PATTERN
+        if [ $NEXT_VCOM_PATTERN -eq 0 ]; then
+            NEXT_VCOM_PATTERN=255
+        else
+            NEXT_VCOM_PATTERN=0
+        fi
+
+        # Leave screen up for a second, looking for operator to
+        # hit the exit key
+        KEY=`$GET_KEYBOARD_INPUT ${_VCOM_CANCEL_TIMEOUT}`
+        if [ "$?" -eq 0 ]; then
+            case "$KEY" in
+                $SUCCESS_KEY)
+                    video_set_vcom_set 1
+                    ALL_DONE=1
+                    ;;
+                $EXIT_KEY)
+                    video_set_vcom_set 0
+                    ALL_DONE=1
+                    ;;
+                *)
+                    ;;
+            esac
+        fi
+
+        # See if user wants to stop
+        if [ $ALL_DONE -ne 1 ]; then
+            video_vcom_user_done_yet
+            if [ "$?" -eq 1 ]; then
+                # User's all done
+                ALL_DONE=1
+            fi
+        fi
+    done
+
+    # Set the vcom register back
+    do_disable_vcom 1
+
+    # Return that we set VCOM (reverse polarity first)
+    video_get_vcom_set
+    if [ "$?" -eq 0 ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+
+######################################################################
+# Function:     video_vcom_fct_test
+# Purpose:      Puts the device into a mode where VCOM can be measured.
+#               Fixture must dismiss the test by sending a 1.
+# Paramters:    none
+# Returns:      none
+######################################################################
+video_vcom_fct_test()
+{
+    FCT_MESSAGE_SENT=0
+
+    # Keep the video busy while operator adjusts VCOM
+    NEXT_VCOM_PATTERN=0
+    ALL_DONE=0
+    while [ $ALL_DONE -ne 1 ]; do
+        # Paint video
+        ${EIPS} -p $NEXT_VCOM_PATTERN
+        if [ $NEXT_VCOM_PATTERN -eq 0 ]; then
+            NEXT_VCOM_PATTERN=255
+        else
+            NEXT_VCOM_PATTERN=0
+        fi
+
+        # If we haven't sent message to fixture yet, do so now...
+        if [ $FCT_MESSAGE_SENT -eq 0 ]; then
+            echo "Fixture: Press $SUCCESS_KEY_LABEL when EINK power supply voltages have been measured."
+            FCT_MESSAGE_SENT=1 
+        fi
+
+        # Look for operator to send the success key
+        KEY=`$GET_KEYBOARD_INPUT ${_VCOM_CANCEL_TIMEOUT}`
+        if [ "$?" -eq 0 ]; then
+            case "$KEY" in
+                $SUCCESS_KEY)
+                    # Disable VCOM, no status echo
+                    do_disable_vcom 0
+                    ALL_DONE=1
+                    ;;
+                *)
+                    ;;
+            esac
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     video_verify_waveform
+# Purpose:      Returns whether or not the waveform is valid.  If it
+#               hasn't been done already, this routine will display the
+#               waveform and commands version for the user to verify,
+#               and then return the results of that verification.
+#               If the user has already performed this verification,
+#               the saved results of that verification is returned.
+# Paramters:    none
+# Returns:      0 - waveform is valid
+#               1 - waveform is NOT valid
+#               2 - Operator cancelled
+######################################################################
+video_verify_waveform()
+{
+    RESULT=1
+    if [ $VIDEO_WAVEFORM_VALID_LOADED -eq 0 ]; then
+        video_get_user_verify_parameters
+        RESULT="$?"
+    else
+        if [ $VIDEO_WAVEFORM_VALID -ne 0 ]; then
+            RESULT=0
+        fi
+    fi
+    return $RESULT
+}
+
+
+######################################################################
+# Function:     video_verify_commands
+# Purpose:      Returns whether or not the broadsheet commands in the
+#               SPI is a valid version or not.  If it
+#               hasn't been done already, this routine will display the
+#               waveform and commands version for the user to verify,
+#               and then return the results of that verification.
+#               If the user has already performed this verification,
+#               the saved results of that verification is returned.
+# Paramters:    none
+# Returns:      0 - commands version is valid
+#               1 - commands version is NOT valid
+#               2 - Operator cancelled
+######################################################################
+video_verify_commands()
+{
+    RESULT=1
+    if [ $VIDEO_CMDS_VALID_LOADED -eq 0 ]; then
+        video_get_user_verify_parameters
+        RESULT="$?"
+    else
+        if [ $VIDEO_CMDS_VALID -ne 0 ]; then
+            RESULT=0
+        fi
+    fi
+    return $RESULT 
+}
+
+######################################################################
+# Function:     video_do_update_waveform
+# Purpose:      Export the USB volume, have operator copy waveform to
+#               the drive and once operator confirms the file is there,
+#               unexport the drive, grab the file and flash it, deleting
+#               the file from the user store once it's grabbed.
+# Paramters:    none
+# Returns:      0 - waveform updated properly
+#               1 - waveform update failed / user canceled
+#               2 - user canceled
+######################################################################
+video_do_update_waveform()
+{
+  _RETRIES=3
+  _DONE=0
+  while [ $_DONE -eq 0 ] && [ $_RETRIES -gt 0 ]; do
+    # Export the usb volume and tell operator to copy file to it
+    export_usb_volumes
+
+    clear_screen
+    ${DOUT} -n 15 4 "EINK Waveform Updater"
+    ${DOUT} -n 6 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 6 7 "Connect a USB cable between the device"
+    ${DOUT} -n 6 9 "and a host PC.  Copy the waveform file"
+    ${DOUT} -n 6 11 "onto the USB drive exported from the"
+    ${DOUT} -n 6 13 "device and then safely remove USB mass"
+    ${DOUT} -n 6 15 "storage device from PC."
+    ${DOUT} 6 19 "Press $SUCCESS_KEY_LABEL once waveform has been copied."
+    ${DOUT} 6 21 "Press $EXIT_KEY_LABEL to cancel."
+
+    # Did user copy the file or cancel?
+    DONE=0
+    CANCEL=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                DONE=1
+                ;;
+            $EXIT_KEY)
+                return 2
+                ;;
+            *)
+                vmsg "Wrong key $Key pressed"
+                ;;
+        esac
+    done
+
+    # Waveform is out on USB volume.  Get it and delete original
+    un_export_usb_volumes
+
+    # Wait up to 10 seconds for the file to show up, 2 seconds at a time
+    _RETRIES=5
+    _FOUND=0
+    while [ $_RETRIES -gt 0 ] && [ $_FOUND -eq 0 ]; do
+        the_file_list=`ls "$USB_EXPORT_VOLUME" | grep ".wbf"`
+        if [ ! -z "$the_file_list" ]; then
+            _FOUND=1
+        else
+            the_file_list=""
+            let _RETRIES--
+            ls "$USB_EXPORT_VOLUME"
+            echo "No file yet, waiting 2 seconds and trying again..."
+            sleep 2
+        fi
+    done
+
+    # If no valid files found, inform the user and try again....
+    if [ -z "$the_file_list" ]; then
+        clear_screen
+        ${DOUT} -n 15 4 "EINK Waveform Updater"
+        ${DOUT} -n 6 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 6 7 "Could not find a valid waveform file"
+        ${DOUT} -n 6 9 "on USB exported volume."
+        ${DOUT} -n 6 13 "Valid waveform files must end in"
+        ${DOUT} -n 6 15 "the .wbf extension."
+        ${DOUT} 6 19 "Press $EXIT_KEY_LABEL to continue."
+        wait_for_key $EXIT_KEY
+        return 1
+    fi
+
+    # Now flash the waveform
+    _NOT_FLASHED=1
+    if [ -z $DISABLE_VIDEO_PANEL_ID_CHECK ] || [ $DISABLE_VIDEO_PANEL_ID_CHECK -eq 0 ]; then
+        # Flash the first valid file seen, log error for the rest
+        _PANEL_MISMATCH=0
+        for the_file in $the_file_list; do
+            if [ $_NOT_FLASHED -eq 0 ]; then
+                do_local_echo "Ignoring extra waveform file $the_file"
+            else
+                # Make sure the waveform is the right one
+                export WAVEFORM_PANEL_ID=
+                get_waveform_panel_id "$USB_EXPORT_VOLUME/$the_file"
+                if [ ! -z "$WAVEFORM_PANEL_ID" ]; then
+                    local_waveform_version="$WAVEFORM_PANEL_ID"
+                    get_barcode_panel_id
+                    local_rom_panel_id="${BARCODE_PANEL_ID}"
+                    if [ "$local_waveform_version" == "$local_rom_panel_id" ]; then
+                        do_local_echo "Flashing waveform file $the_file..."
+                        ${DO_FLASH_WAVEFORM_CMD} "$USB_EXPORT_VOLUME/$the_file"
+                        do_local_echo "Deleting waveform file $the_file..."
+                        rm -rf "$USB_EXPORT_VOLUME/$the_file"
+                        sync
+                        _NOT_FLASHED=0
+                        _DONE=1
+                        export VIDEO_WAVEFORM_VALID_LOADED=0 
+                    else
+                        _PANEL_MISMATCH=1
+                    fi
+                else
+                    _PANEL_MISMATCH=1
+                fi
+
+                if [ $_PANEL_MISMATCH -eq 1 ]; then
+                    clear_screen
+                    ${DOUT} -n 15 4 "EINK Waveform Updater"
+                    ${DOUT} -n 6 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+                    ${DOUT} -n 6 7 "The file $the_file"
+                    ${DOUT} -n 6 9 "is not a valid waveform file for this"
+                    ${DOUT} -n 6 11 "panel.  Use a waveform file compatible"
+                    ${DOUT} -n 6 13 "with panel_id $local_rom_panel_id."
+                    ${DOUT} 6 17 "Press $EXIT_KEY_LABEL to continue ."
+                    wait_for_key $EXIT_KEY
+                fi
+            fi
+        done 
+    else
+        # Flash the waveform
+        _NOT_FLASHED=1
+        for the_file in $the_file_list; do
+            if [ $_NOT_FLASHED -eq 0 ]; then
+                do_local_echo "Ignoring extra waveform file $the_file"
+            else
+                do_local_echo "Flashing waveform file $the_file..."
+                ${DO_FLASH_WAVEFORM_CMD} "$USB_EXPORT_VOLUME/$the_file"
+                _FLASH_ERR="$?"
+                if [ $_FLASH_ERR -eq 0 ]; then
+                    do_local_echo "Deleting waveform file $the_file..."
+                    rm -rf "$USB_EXPORT_VOLUME/$the_file"
+                    sync
+                    _NOT_FLASHED=0
+                    _DONE=1
+                    export VIDEO_WAVEFORM_VALID_LOADED=0
+                else
+                    clear_screen
+                    ${DOUT} -n 15 4 "EINK Waveform Updater"
+                    ${DOUT} -n 6 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+                    ${DOUT} -n 6 7 "The file $the_file"
+                    ${DOUT} -n 6 9 "is not a valid waveform file for this"
+                    ${DOUT} -n 6 11 "panel (err=$_FLASH_ERR)."
+                    ${DOUT} 6 15 "Press $EXIT_KEY_LABEL to continue ."
+                    wait_for_key $EXIT_KEY
+                fi
+            fi
+        done
+    fi
+
+    # Don't allow failures to loop forever
+    let _RETRIES-=1
+  done
+  return $_NOT_FLASHED
+}
+
+
+
+######################################################################
+# Function:     video_ask_to_update_waveform
+# Purpose:      Ask the user if they want to flash waveform now or not.
+# Paramters:    none
+# Returns:      0 - Don't flash waveform now, just exit video diags
+#               1 - User wants to flash waveform now
+######################################################################
+video_ask_to_update_waveform()
+{
+    clear_screen
+    ${DOUT} -n 15 4 "EINK Waveform Updater"
+    ${DOUT} -n 6 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 6 7 "The waveform needs updating."
+    ${DOUT} -n 6 9 "Do you want to update the waveform now ?"
+    ${DOUT} -n 6 13 "Press $SUCCESS_KEY_LABEL to update waveform now."
+    ${DOUT} 6 15 "Press $EXIT_KEY_LABEL to exit video diagnostic."
+
+    # Get the key request
+    DONE=0
+    DO_WAVE_UPDATE=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                DONE=1
+                DO_WAVE_UPDATE=1
+                ;;
+            $EXIT_KEY)
+                DONE=1
+                ;;
+            *)
+                vmsg "Wrong key $Key pressed"
+                ;;
+        esac
+    done
+    return $DO_WAVE_UPDATE
+}
+
+
+######################################################################
+# Function:     video_do_verify_panel_id
+# Purpose:      Verify that the panel id matches the installed waveform.
+#               If it doesn't ask user if they want to update now, and
+#               if so, update the waveform and re-run the test.
+# Paramters:    none
+# Returns:      1 - Test failed
+#               0 - Test passed
+#               2 - Operator cancelled
+######################################################################
+video_do_verify_panel_id()
+{
+    RETRIES=3
+    LOCAL_NOT_DONE=1
+    while [ $RETRIES -gt 0 ] && [ $LOCAL_NOT_DONE -eq 1 ]; do
+        # Check to see if waveform matches panel_id...
+        video_verify_waveform
+        failed=$?
+        if [ $failed -eq 0 ]; then
+            #success "Panel ID Verification"
+            LOCAL_NOT_DONE=0
+        elif [ $failed -eq 2 ]; then 
+            failure "Panel ID Verification - cancelled"
+            return 2;
+        elif [ $failed -eq 1 ]; then 
+            video_ask_to_update_waveform
+            if [ "$?" -eq 1 ]; then
+                video_do_update_waveform
+                if [ $? -eq 2 ]; then
+                    LOCAL_NOT_DONE=0
+                fi
+                let RETRIES-=1
+            else
+                LOCAL_NOT_DONE=0
+            fi
+        else
+            echo "ERROR - video_verify_waveform returned invalid response of $failed"
+        fi
+    done
+
+    return $passed
+}
+
+
+######################################################################
+# Function:     notify_no_ds_blooming_waveform_support
+# Purpose:      Ask operator if they want to flash new waveform or not.
+# Paramters:    none
+# Returns:      0 - Flash new waveform
+#               1 - Continue without flashing new waveform
+#               2 - Exit video diagnostics without flashing waveform
+######################################################################
+notify_no_ds_blooming_waveform_support()
+{
+    # Display test instructions, wait for operator to ack
+    clear_screen
+    banner="Video Waveform Verification"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 5 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 5 5 "$base"
+    ${DOUT} -n 2 7 "ERROR"
+    ${DOUT} -n 2 9 "The waveform does not support DS Blooming."
+    ${DOUT} -n 2 13 "Press $SUCCESS_KEY_LABEL to reflash the waveform now."
+    ${DOUT} -n 2 15 "Press $FAILURE_KEY_LABEL to continue without changing waveform."
+    ${DOUT} 2 17 "Press $EXIT_KEY_LABEL to exit Video Diagnostics."
+    while [ 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            case "$KEY" in
+                $SUCCESS_KEY) return 0 ;;
+                $FAILURE_KEY) return 1 ;;
+                $EXIT_KEY) return 2 ;;
+                *) ;;
+            esac
+        fi
+    done
+
+}
+
+
+######################################################################
+# Function:     video_do_verify_blooming_waveform
+# Purpose:      If waveform doesn't support DS Blooming, Ask operator 
+#               if they want to flash new waveform or not.
+# Paramters:    none
+# Returns:      0 - Flashed new waveform
+#               1 - Continue without flashing new waveform
+#               2 - Exit video diagnostics without flashing waveform
+######################################################################
+video_do_verify_blooming_waveform()
+{
+    # Only retry a few times before giving up
+    RETRIES=3
+    while [ $RETRIES -gt 0 ]; do
+
+        # If waveform supports DS Blooming, we're done...
+        if ( waveform_has_increased_ds_blooming ); then
+            success "DS Blooming Supported"
+            return 0
+        fi
+
+        # Waveform doesn't support DS Blooming, ask operator if they
+        # want to reflash waveform now
+        notify_no_ds_blooming_waveform_support
+        failed=$?
+        if [ $failed -eq 1 ]; then
+            # Operator wants to continue video diagnostics without reflashing waveform
+            failure "DS Blooming Support Missing - Override Continue"
+            return 1
+        elif [ $failed -eq 2 ]; then 
+            # Exit Video Diagnostic without flashing waveform
+            failure "DS Blooming Support Missing"
+            return 2;
+        elif [ $failed -eq 0 ]; then 
+            # Operator wants to Flash new waveform, let's do it now
+            video_do_update_waveform
+
+            # We purposely ignore error code 2 because the operator cancelled the flash
+            # operation, so we need them to tell us whether they want to continue
+            # without flashing or cancel video diags
+
+            # 1 less try left before we give up
+            let RETRIES-=1
+        else
+            echo "ERROR - notify_no_ds_blooming_waveform_support returned invalid response of $failed"
+        fi
+    done
+
+    # If here, we tried too many times and failed
+    failure "DS Blooming Support FAILED UPDATE"
+    return 2
+}
+
+
+######################################################################
+# Function:     video_verify_parameters
+# Purpose:      Verify that video parameters and settings are correct.
+#               For Mario, verify that the waveform and command versions
+#               are correct.
+# Paramters:    none
+# Returns:      0 - Video information is valid
+#               1 - Video information is NOT valid
+#               2 - Operator cancelled test
+# Assumptions:  none
+# Side Effect:  Sets SUB_TEST_PASS based on results
+######################################################################
+video_verify_parameters()
+{
+    # Verify panel_id matches waveform, if not, reflash it
+    video_do_verify_panel_id
+    failed=$?
+    if [ $failed -ne 0 ]; then
+        failure "Panel ID Verification"
+        return 1
+    elif [ $failed -eq 2 ]; then
+        failure "Panel ID Verification - operator cancelled"
+        return 2
+    fi
+
+    # If required, verify that the waveform supports DS Blooming
+    # If not, indicate failure now
+    if [ -n "$HAS_DS_BLOOMING" ] && [ $HAS_DS_BLOOMING -eq 1 ]; then
+        video_do_verify_blooming_waveform
+        failed=$?
+        if [ $failed -eq 2 ]; then
+            failure "DS Blooming Verification - operator cancelled"
+            return 2
+        fi
+    fi
+
+    # Now verify that the waveform version is correct
+    video_verify_waveform
+    failed=$?
+    if [ $failed -eq 0 ]; then
+        success "Waveform Version"
+    elif [ $failed -eq 2 ]; then
+        failure "Waveform Version - cancelled"
+        return 2
+    else
+        failure "Waveform Version"
+        return 1
+    fi
+
+    # Now verify that the commands version is correct
+    video_verify_commands
+    failed=$?
+    if [ $failed -eq 0 ]; then
+        success "Commands Version"
+    elif [ $failed -eq 2 ]; then
+        failure "Commands Version - cancelled"
+        return 2
+    else
+        failure "Commands Version"
+        return 1
+    fi
+    return 0
+}
+
+
+######################################################################
+# Function:     video_do_eye_one_test
+# Purpose:      Execute the eye-one optical test.
+# Paramters:    none
+# Returns:      none
+######################################################################
+video_do_eye_one_test()
+{
+    clear_screen
+    banner="Eye One Test Not Supported On This Device"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 0 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 0 5 "$base"
+    ${DOUT} 0 7 "Press $EXIT_KEY_LABEL to exit back to main menu."
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:    video_hal_init
+# Purpose:     Initialization code for the video hal layer
+# Paramters:   none
+# Returns:     none
+######################################################################
+video_hal_init()
+{
+    #
+    # Need to spoof video driver so it thinks the framework is the client
+    #
+    vmsg "video_hal_init()"
+    echo 1 >${_RUNNING_DIAGS_CTRL}
+}
+
+
+######################################################################
+# Function:    video_hal_exit
+# Purpose:     Cleanup / exit code for the video hal layer
+# Paramters:   none
+# Returns:     none
+######################################################################
+video_hal_exit()
+{
+    #
+    # Nothing to uninitialize for video hal
+    #
+    vmsg "video_hal_exit()"
+}

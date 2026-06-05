@@ -1,0 +1,13 @@
+//
+// 
+// Copyright 2008 Sun Microsystems, Inc. All rights reserved.
+// SUN PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+//
+
+
+// grant all permissions granted to all domains
+
+grant { 
+        permission java.security.AllPermission;
+};
+

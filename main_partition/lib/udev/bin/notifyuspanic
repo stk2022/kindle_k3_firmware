@@ -1,0 +1,5 @@
+#!/bin/sh
+
+_LOG="/usr/bin/logger -s -t $(basename $0)"
+
+${_LOG} "I $(basename $0):panic::FAT panic (corrupted userstore)"

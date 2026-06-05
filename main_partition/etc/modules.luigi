@@ -1,0 +1,20 @@
+# USB core driver
+#usbcore
+
+# WAN hardware driver
+mwan
+
+# USB gadget filesystem driver
+g_file_storage "removable=y"
+
+# FUSE driver
+fuse
+
+# for VNC
+uinput
+
+# Input devices
+mxc_keyb
+fiveway
+volume
+

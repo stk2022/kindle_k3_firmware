@@ -1,0 +1,8 @@
+#!/bin/sh
+
+USBNETWORK=/test/bin/usbnetwork
+
+if [ -x ${USBNETWORK} ] ; then
+	${USBNETWORK} $1
+fi
+

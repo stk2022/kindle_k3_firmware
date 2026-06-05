@@ -1,0 +1,194 @@
+#!/bin/sh
+
+export PATH=/usr/sbin:${PATH}
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EINK_BOOTSTRAP=/opt/eink/scripts/bootstrap-broadsheet
+
+_EINK_COMMANDS_VERSION=${EINK_PROC}/commands_version
+
+_EINK_COMMANDS_UPDATE_FAILED_ERROR_CODE=0101
+_EINK_COMMANDS_UPDATE_ERROR_CODE_LEN=4
+
+_REQ_FILE_SIZE=2182
+
+_NO_LOGO=0
+
+_COMMANDS_EINK_VERSION=
+_COMMANDS_FILE_VERSION=
+
+_COMMANDS_FILE_CKSUM_EMBEDDED=
+_COMMANDS_FILE_CKSUM_COMPUTED=
+
+_COMMANDS_FILE=
+_COMMANDS_FILE_BASENAME=
+
+get_eink_commands_version()
+{
+    _COMMANDS_EINK_VERSION="`cat ${_EINK_COMMANDS_VERSION}`"
+}
+
+get_file_commands_version()
+{
+    _COMMANDS_FILE_VERSION="`eu commands ${_COMMANDS_FILE}`"
+}
+
+get_file_commands_cksum()
+{
+    _COMMANDS_FILE_CKSUM_EMBEDDED="`eu commands -e ${_COMMANDS_FILE}`"
+    _COMMANDS_FILE_CKSUM_COMPUTED="`eu commands -c ${_COMMANDS_FILE}`"
+}
+
+eips_update_msg()
+{
+    _EIPS_X_UPDATE_MSG=$(( (${SCREEN_X_RES}/${EIPS_X_RES} - ${#_COMMANDS_FILE_VERSION}) ))
+    _EIPS_Y_UPDATE_MSG=$(( (${SCREEN_Y_RES}/${EIPS_Y_RES} - 1) ))
+    ${EIPS} ${_EIPS_X_UPDATE_MSG} ${_EIPS_Y_UPDATE_MSG} "${_COMMANDS_FILE_VERSION}"
+}
+
+# Preflight the input parameters.
+#
+if ! ( eink_rom_is_flash ); then
+    msg "device does not support commands flashing" E
+    exit ${EINK_ERR_RECOVERABLE}
+fi
+
+if [ $# -ne 1 ]; then
+    msg "usage: $0 commands" E
+    exit ${EINK_ERR_RECOVERABLE}
+fi
+
+if [ ! -f "$1" ]; then
+    msg "cannot open commands $1" E
+    exit ${EINK_ERR_RECOVERABLE}
+fi
+
+_COMMANDS_FILE="$1"
+_COMMANDS_FILE_BASENAME=`basename ${_COMMANDS_FILE}`
+_SIZE="`cat ${_COMMANDS_FILE} | wc -c | sed 's/^  *//'`"
+
+if [ ${_SIZE} -lt ${_REQ_FILE_SIZE} ]; then
+    msg "commands $1 is not the required size (needs to be ${_REQ_FILE_SIZE} bytes or more)" E
+    exit ${EINK_ERR_RECOVERABLE}
+fi
+
+msg "flashing commands $1" I
+
+# Stop the framework, leaving the screen as is, and stop the power daemon.
+#
+shutdown_framework $SHUTDOWN_FRAMEWORK_SCREEN_ASIS
+stop_powerd
+
+# Put the initial software-update screen up.
+#
+display_update_screen_initial
+update_progressbar 10
+
+# Print out existing (controller's) commands info.
+#
+get_eink_commands_version
+update_progressbar 20
+
+msg "Existing commands version:" I
+msg "  ${_COMMANDS_EINK_VERSION}" I
+
+# Print out commands file's info.
+#
+msg "Commands name:" I
+msg "  ${_COMMANDS_FILE_BASENAME}" I
+
+msg "Commands size:" I
+msg "  ${_SIZE} bytes" I
+
+get_file_commands_version
+update_progressbar 30
+
+msg "Commands version:" I
+msg "  ${_COMMANDS_FILE_VERSION}" I
+
+get_file_commands_cksum
+update_progressbar 40
+
+msg "Commands checksum:" I
+msg "  embedded is ${_COMMANDS_FILE_CKSUM_EMBEDDED}" I
+msg "  computed is ${_COMMANDS_FILE_CKSUM_COMPUTED}" I
+
+# Flash commands.
+#
+_MSG="Updating commands..."
+msg "${_MSG}flashing" I
+
+update_progressbar 50
+eips_update_msg
+
+${_EINK_BOOTSTRAP} ${_COMMANDS_FILE}
+_RES=$?
+
+# Verify flash.
+#
+if [ ${_RES} -eq 0 ]; then
+
+    msg "${_MSG}verifying" I
+    ${EINK_FLASH_RESTART} ${_NO_LOGO}
+    
+    display_update_screen_initial
+    update_progressbar 60
+    eips_update_msg
+    
+    get_eink_commands_version
+    update_progressbar 75
+
+    if [ "${_COMMANDS_FILE_VERSION}" != "${_COMMANDS_EINK_VERSION}" ]; then
+
+        msg "${_MSG}ERROR:" E
+        msg "  ${_COMMANDS_FILE_VERSION} does not equal ${_COMMANDS_EINK_VERSION}" E
+        
+        _RES=${EINK_ERR_UNRECOVERABLE}
+
+    else
+        
+        update_progressbar 90
+        
+        msg "${_MSG}OK:" I
+        msg "  ${_COMMANDS_EINK_VERSION}" I
+        
+        echo "Rebooting in 5 seconds..."
+        display_update_screen_success
+        
+    fi
+    
+else
+
+    msg "${_MSG}ERROR:" E
+    msg "  bootstrapper returned ${_RES}" E
+
+fi
+
+# Reboot on success.
+#
+if [ ${_RES} -eq 0 ]; then
+
+    sleep 5
+
+else
+
+    if [ ${_RES} -eq ${EINK_ERR_RECOVERABLE} ]; then
+        _KEY_WAIT=R
+        _KEY_WAIT_CODE=19
+    
+        _EIPS_X_UPDATE_FAILURE=$(( ((${SCREEN_X_RES}/${EIPS_X_RES} - ${_EINK_COMMANDS_UPDATE_ERROR_CODE_LEN})/2 - 1) ))
+    
+        echo "Please press the \"${_KEY_WAIT}\" key on the keyboard"
+        echo "to restart the device."
+        display_update_screen_failure
+        ${EIPS} ${_EIPS_X_UPDATE_FAILURE} ${EIPS_Y_UPDATE_FAILURE} ${_EINK_COMMANDS_UPDATE_FAILED_ERROR_CODE}
+        eips_update_msg
+    
+        waitforkey ${_KEY_WAIT_CODE}
+    fi
+
+fi
+
+reboot

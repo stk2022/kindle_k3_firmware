@@ -1,0 +1,214 @@
+#!/bin/sh
+########################################################################################
+#
+#  File:   environment.turingww
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   01/27/09
+#
+#  Copyright (C) 2005-2010 Amazon Technologies
+#
+#  Description:
+#      Contains Turing World Wide specific environment variables for system diagnostics.
+#
+########################################################################################
+
+#
+# Turing Supported Component List
+#
+export HAS_VIDEO=1
+export HAS_LED=1
+export HAS_BUTTONS=1
+export HAS_KEYBOARD=1
+export HAS_FIVEWAY=1
+export HAS_USB_DEVICE=1
+export HAS_POWER=1
+export HAS_GAS_GAUGE=1
+export HAS_AUDIO=1
+export USE_AUDIO_SERVER=1
+export HAS_WAN=1
+export HAS_MOVINAND=1
+export HAS_RUN_MODES=1
+export HAS_RUN_IN=1
+export HAS_DEVICE_SETTINGS=1
+export HAS_FCT=1
+export HAS_TTS=1
+export HAS_OPERATOR_SUITE=1
+export HAS_SETABLE_PANEL_ID=1
+export HAS_DEDICATED_NUMBER_KEYS=1
+
+
+
+# Set to 1 to require DS Blooming support in waveforms
+export HAS_DS_BLOOMING=1
+
+# Input devices / Event entry
+export TURINGWW_KEYBOARD_DRIVER_NAME="mxckpd"
+export TURINGWW_FIVEWAY_DRIVER_NAME="fiveway"
+export TURINGWW_VNC_DRIVER_NAME="vncinput"
+export TURINGWW_BUTTON_DRIVER_NAME="$TURINGWW_KEYBOARD_DRIVER_NAME"
+export TURINGWW_SERIAL_USB_DRIVER_NAME="ttygserial"
+
+
+export KEYBOARD_DRIVER_NAME=$TURINGWW_KEYBOARD_DRIVER_NAME
+export BUTTON_DRIVER_NAME=$TURINGWW_BUTTON_DRIVER_NAME
+export FIVEWAY_DRIVER_NAME=$TURINGWW_FIVEWAY_DRIVER_NAME
+export VNC_DRIVER_NAME=$TURINGWW_VNC_DRIVER_NAME
+export SERIAL_USB_DRIVER_NAME=$TURINGWW_SERIAL_USB_DRIVER_NAME
+
+# Screen file printing utility
+export FILE_TO_SCREEN="file_to_screen"
+export LOGFILE_TO_SCREEN="$FILE_TO_SCREEN $DIAGNOSTIC_LOGFILE"
+
+# Video Images Directory
+export VIDEO_IMAGES_ROOT_OFFSET="images/A"
+export VIDEO_IMAGES_ROOT="$VIDEO_ROOT/$VIDEO_IMAGES_ROOT_OFFSET"
+
+# Key code definitions
+export KEY_1=2
+export KEY_2=3
+export KEY_3=4
+export KEY_4=5
+export KEY_5=6
+export KEY_6=7
+export KEY_7=8
+export KEY_8=9
+export KEY_9=10
+export KEY_0=11
+export KEY_Q=16
+export KEY_W=17
+export KEY_E=18
+export KEY_R=19
+export KEY_T=20
+export KEY_Y=21
+export KEY_U=22
+export KEY_I=23
+export KEY_O=24
+export KEY_P=25
+export KEY_A=30
+export KEY_S=31
+export KEY_D=32
+export KEY_F=33
+export KEY_G=34
+export KEY_H=35
+export KEY_J=36
+export KEY_K=37
+export KEY_L=38
+export KEY_BACKSPACE=14
+export KEY_Z=44
+export KEY_X=45
+export KEY_C=46
+export KEY_V=47
+export KEY_B=48
+export KEY_N=49
+export KEY_M=50
+export KEY_DOT=52
+export KEY_SLASH=53
+export KEY_ENTER=28
+export KEY_SHIFT=42
+export KEY_ALT=56
+export KEY_SPACE=57
+export KEY_FONT=90
+export KEY_SYM=94
+
+
+# Success and Failure Keys
+export SUCCESS_KEY=$KEY_1
+export FAILURE_KEY=$KEY_0
+export EXIT_KEY=$KEY_X
+export EXIT_KEY_LABEL='X'
+export ALTERNATE_EXIT_KEY=$KEY_C
+export ALTERNATE_EXIT_KEY_LABEL='C'
+export SUCCESS_KEY_LABEL='1'
+export FAILURE_KEY_LABEL='0'
+
+#
+# Define menu item constants
+#
+export MENU_ITEM_1=$KEY_1
+export MENU_ITEM_2=$KEY_2
+export MENU_ITEM_3=$KEY_3
+export MENU_ITEM_4=$KEY_4
+export MENU_ITEM_5=$KEY_5
+export MENU_ITEM_6=$KEY_6
+export MENU_ITEM_7=$KEY_7
+export MENU_ITEM_8=$KEY_8
+export MENU_ITEM_9=$KEY_9
+export MENU_ITEM_10=$KEY_0
+export MENU_ITEM_11=$KEY_M
+export MENU_ITEM_12=$KEY_N
+export MENU_ITEM_13=$KEY_S
+export MENU_ITEM_14=$KEY_F
+export MENU_ITEM_15=$KEY_G
+export MENU_ITEM_16=$KEY_H
+export MENU_ITEM_17=$KEY_J
+export MENU_ITEM_18=$KEY_K
+export MENU_ITEM_19=$KEY_L
+export MENU_ITEM_20=$KEY_B
+export MENU_ITEM_DISABLE=$KEY_D
+
+#
+# Define a list of the possible menu items
+#
+export MENU_ITEM_LIST="$MENU_ITEM_1 $MENU_ITEM_2 $MENU_ITEM_3 $MENU_ITEM_4 $MENU_ITEM_5 $MENU_ITEM_6 $MENU_ITEM_7 $MENU_ITEM_8 $MENU_ITEM_9 $MENU_ITEM_10 $MENU_ITEM_11 $MENU_ITEM_12 $MENU_ITEM_13 $MENU_ITEM_14 $MENU_ITEM_15 $MENU_ITEM_16 $MENU_ITEM_17 $MENU_ITEM_18 $MENU_ITEM_19 $MENU_ITEM_20"
+
+#
+# Define components to be exercised in run-in test
+#
+export RUN_IN_USB_ENABLE_DEFAULT="DISABLED";
+export RUN_IN_WAN_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_VIDEO_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_HAPTIC_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_LED_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_AUDIO_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_POWER_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_GAS_GAUGE_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_MOVINAND_ENABLE_DEFAULT="ENABLED";
+export RUN_IN_CHARGER_CHECK_ENABLE_DEFAULT="ENABLED";
+
+
+#
+# Define default parameters for run-in tests
+#
+export RUN_IN_HP_AUDIO_VOLUME=10
+export RUN_IN_SPEAKER_AUDIO_VOLUME=10
+export ATLAS_TEST_AUDIO_VOLUME=56
+
+#
+# volume scaling - on scale 0-100, 7 clicks per db change
+#
+export VOLUME_PER_STEP=7
+
+
+#
+# Default battery charge level to target during run-in (35 - 75%)
+#
+# Per Charles' spec, confirm final charge state prior to
+#   shipment (35% < charge < 75%)
+# Test uses >= and <= (i.e. limits below are VALID final capacities
+#
+export LOW_CHARGE_LIMIT=37
+export HIGH_CHARGE_LIMIT=73
+export RUN_IN_LOWER_CHARGE_LIMIT=35
+export RUN_IN_UPPER_CHARGE_LIMIT=75
+
+
+#
+# No screen offsets required on Turing as it has smaller (standard) screen
+#
+export SCREEN_X_OFFSET=0
+export SCREEN_Y_OFFSET=0
+
+#
+# Tools and locations to use for setting device parameters
+#
+export PANEL_SET_TOOL="/usr/sbin/idme --panel"
+export SERIAL_NUMBER_SET_TOOL="/usr/sbin/idme --serial"
+export PCB_ID_SET_TOOL="/usr/sbin/idme --pcbsn"
+export DO_FLASH_WAVEFORM_CMD="/usr/sbin/ewu -no_reboot"
+
+export DEVICE_PCB_ID_FILE="$DIAGNOSTIC_ROOT/device_pcb_id"
+export DEVICE_PCB_ID_ENTRY="/proc/pcbsn"
+export DEVICE_PANEL_ID_ENTRY="/proc/panel_id"
+export DEVICE_SERIAL_NUMBER_ENTRY="/proc/usid"

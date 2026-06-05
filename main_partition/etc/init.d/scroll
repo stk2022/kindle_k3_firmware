@@ -1,0 +1,250 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Just skip this entirely on Luigi-based devices.
+#
+if ( is_Luigi_Platform ); then
+    msg "skipping; no luigi-based work to do here" I
+    exit 0
+fi
+
+_IDME_FUNCTIONS=/usr/sbin/idme_functions
+[ -f ${_IDME_FUNCTIONS} ] && . ${_IDME_FUNCTIONS}
+
+_FIVEWAY='fiveway SELECT_hold_timeout=0 SELECT_auto_repeat_time=0'
+_MARIO_FIVEWAY_PARAMS='fiveway_rev=0'
+_TURING_EVT1_FIVEWAY_PARAMS='fiveway_rev=2'
+_TURING_FIVEWAY_PARAMS='fiveway_rev=2'
+_NELL_PROTO_FIVEWAY_PARAMS='fiveway_rev=2'
+_NELL_FIVEWAY_PARAMS='fiveway_rev=2'
+_HAPTIC=haptic
+_MARIO_HAPTIC_PARAMS='scroll_rev=0 haptic_rev=0'
+_TURING_EVT1_HAPTIC_PARAMS='scroll_rev=2 haptic_rev=0'
+_TURING_HAPTIC_PARAMS='haptic_rev=1'
+_NELL_PROTO_HAPTIC_PARAMS='scroll_rev=2 haptic_rev=0'
+_NELL_HAPTIC_PARAMS='haptic_rev=1'
+_KEYPAD=mxc_keyb
+_ADS_KEYPAD_PARAMS='kb_rev=0'
+_MARIO_KEYPAD_PARAMS='kb_rev=0'
+_TURING_KEYPAD_PARAMS='kb_rev=3'
+_NELL_PROTO_KEYPAD_PARAMS='kb_rev=4'
+_NELL_EVT1_KEYPAD_PARAMS='kb_rev=4'
+_NELL_KEYPAD_PARAMS='kb_rev=5'
+_ACCELEROMETER=
+_NELL_EVT1_ACCELEROMETER=mma7455L
+_NELL_EVT1_ACCELEROMETER_PARAMS='rotation=90 flip=1'
+_NELL_ACCELEROMETER=mma7660F
+_NELL_ACCELEROMETER_PARAMS='rotation=0 flip=0'
+_MAG_SENSOR=mag_sensor
+_TURING_EVT1_MAG_SENSOR_PARAMS='hw_rev=0'
+_TURING_MAG_SENSOR_PARAMS='hw_rev=1'
+_NELL_PROTO_MAG_SENSOR_PARAMS='hw_rev=0'
+_NELL_MAG_SENSOR_PARAMS='hw_rev=1'
+_VOLUME=volume
+
+init_scrolldevice()
+{
+    # Set the driver variables accordingly
+    #
+    if ( is_Mario ); then
+        _FIVEWAY="${_FIVEWAY} ${_MARIO_FIVEWAY_PARAMS}"
+        #_HAPTIC="${_HAPTIC} ${_MARIO_HAPTIC_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_MARIO_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    elif (  is_Turing  ) && ( is_EVT ) && ( is_rev1 ); then
+        # Turing EVT1
+        _FIVEWAY="${_FIVEWAY} ${_TURING_EVT1_FIVEWAY_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_TURING_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    elif (  is_Turing  ); then
+        # Turing EVT2 and later
+        _FIVEWAY="${_FIVEWAY} ${_TURING_FIVEWAY_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_TURING_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    elif (  is_TuringWW  ); then
+        # Turing World-Wide
+        _FIVEWAY="${_FIVEWAY} ${_TURING_FIVEWAY_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_TURING_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    elif (  is_Nell  ) && ( is_PROTO ); then
+        # Nell prototype
+        _FIVEWAY="${_FIVEWAY} ${_NELL_PROTO_FIVEWAY_PARAMS}"
+        #_HAPTIC="${_HAPTIC} ${_NELL_PROTO_HAPTIC_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_NELL_PROTO_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER="${_NELL_ACCELEROMETER} ${_NELL_ACCELEROMETER_PARAMS}"
+        _VOLUME=""
+
+    elif (  is_Nell  ) && ( is_EVT ) && ( is_rev1 ); then
+        # Nell EVT1
+        _FIVEWAY="${_FIVEWAY} ${_NELL_FIVEWAY_PARAMS}"
+        #_HAPTIC="${_HAPTIC} ${_NELL_HAPTIC_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_NELL_EVT1_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER="${_NELL_EVT1_ACCELEROMETER} ${_NELL_EVT1_ACCELEROMETER_PARAMS}"
+        _VOLUME=""
+
+    elif (  is_Nell  ); then
+        # Nell EVT2 and later
+        _FIVEWAY="${_FIVEWAY} ${_NELL_FIVEWAY_PARAMS}"
+        #_HAPTIC="${_HAPTIC} ${_NELL_HAPTIC_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_NELL_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER="${_NELL_ACCELEROMETER} ${_NELL_ACCELEROMETER_PARAMS}"
+        _VOLUME=""
+
+    elif (  is_NellWW  ); then
+        # Nell World-Wide
+        _FIVEWAY="${_FIVEWAY} ${_NELL_FIVEWAY_PARAMS}"
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_NELL_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER="${_NELL_ACCELEROMETER} ${_NELL_ACCELEROMETER_PARAMS}"
+        _VOLUME=""
+    
+    elif (  is_ADS  ); then
+        #ADS Board
+        _FIVEWAY=""
+        _HAPTIC=""
+        _KEYPAD="${_KEYPAD} ${_ADS_KEYPAD_PARAMS}"
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    elif (  is_Luigi_Platform  ); then
+        #Luigi-based devices; modules inserted from /etc/modules.luigi, not here
+        _FIVEWAY=""
+        _HAPTIC=""
+        _KEYPAD=""
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    else
+        # If board ID is unknown, no modules are inserted
+        msg "ERROR: unrecognized board ID." W
+        _FIVEWAY=""
+        _HAPTIC=""
+        _KEYPAD=""
+        _MAG_SENSOR=""
+        _ACCELEROMETER=""
+        _VOLUME=""
+
+    fi
+
+    # Load the keypad driver with the selected option
+    #
+    if [ -n "${_KEYPAD}" ]; then
+        msg "initializing ${_KEYPAD} driver" I
+        modprobe ${_KEYPAD}
+    fi
+    
+    # Load the appropriate haptic device driver with the selected option
+    #
+    if [ -n "${_HAPTIC}" ]; then
+        msg "initializing ${_HAPTIC} driver" I
+        modprobe ${_HAPTIC}
+    fi
+    
+    # Load the appropriate fiveway device driver with the selected option
+    #
+    if [ -n "${_FIVEWAY}" ]; then
+        msg "initializing ${_FIVEWAY} driver" I
+        modprobe ${_FIVEWAY}
+    fi
+    
+    # Load the appropriate accelerometer device driver with the selected option
+    #
+    if [ -n "${_ACCELEROMETER}" ]; then
+        msg "initializing ${_ACCELEROMETER} driver" I
+        if ! modprobe ${_ACCELEROMETER} ; then
+           # Failed to insert accelerometer module; if this is an EVT1 Nell
+           # try the Tron module; a few EVT1 units are retrofitted with Tron
+           if (  is_Nell  ) && ( is_EVT ) && ( is_rev1 ); then
+              msg "Trying mma7660F because mma7455L was not found" I
+              _ACCELEROMETER="${_NELL_ACCELEROMETER} ${_NELL_ACCELEROMETER_PARAMS}"
+              msg "initializing ${_ACCELEROMETER} driver" I
+              modprobe ${_ACCELEROMETER} 
+           fi
+        fi
+        if [ -f /var/local/calibration.sh ]; then
+           msg "Applying calibration parameters to MMA7455L accelerometer driver" I
+           /var/local/calibration.sh
+        fi
+        # Perform MMA7660F calibration if offset numbers are stored in NOR
+        get_accel_offset
+        case $ACCEL_OFFSET_STR in
+        $ACCEL_OFFSET_STR_PATTERN)
+           msg "Applying calibration parameters to MMA7660F accelerometer driver ($ACCEL_OFFSET_STR)" I
+           echo "calibrate $ACCEL_OFFSET_STR" > /proc/accelerometer
+           ;;
+        *) 
+           # Use fixed MMA7660F calibration on all Nell DVT units; store values
+           # in NOR
+           if (  is_Nell  ) && ( is_DVT ) ; then
+              NELL_DVT_ACCEL_OFFSET_STR="-4,-2,-2"
+              msg "Applying calibration parameters to MMA7660F in Nell DVT for the first time ($NELL_DVT_ACCEL_OFFSET_STR)" I
+              idme --accel "$NELL_DVT_ACCEL_OFFSET_STR"; wait
+              echo "calibrate $NELL_DVT_ACCEL_OFFSET_STR" > /proc/accelerometer
+           else
+              msg "Calibration parameters for MMA7660F accelerometer not found; not calibrating." W
+           fi
+           ;;
+        esac
+    fi
+    
+    # Load the appropriate magnetic sensor driver with the selected option
+    #
+    if [ -n "${_MAG_SENSOR}" ]; then
+        msg "initializing ${_MAG_SENSOR} driver" I
+        modprobe ${_MAG_SENSOR}
+    fi
+
+    # Load the appropriate volume key device driver with the selected option
+    #
+    if [ -n "${_VOLUME}" ]; then
+        msg "initializing ${_VOLUME} driver" I
+        modprobe ${_VOLUME}
+    fi
+    
+}
+
+case "$1" in
+
+    start)
+        init_scrolldevice
+        ;;
+	stop|restart)
+		msg "argument '$1' not supported" W
+		exit 3
+		;;
+    *)
+   		msg "Usage: $0 stop" W
+		exit 1
+        ;;
+
+esac
+
+exit 0
+

@@ -1,0 +1,80 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+START_FLAG=/mnt/us/ENABLE_USBNET
+START_SCRIPT=/test/bin/usbnetwork
+
+[ ! -x $START_SCRIPT ] && exit 1
+
+status_usbnetd()
+{
+	$START_SCRIPT status > /dev/null
+	if [ $? == 0 ] ; then
+		msg "usbnetd is running" I
+		return 0
+	else
+		msg "usbnetd is not running" I
+	fi
+	
+	return 1
+}
+
+start_usbnetd()
+{
+	if [ -e $START_FLAG ] ; then
+		TETHERED=$(cat $START_FLAG|grep tethered)
+		if [ -n "$TETHERED" ] ; then
+			msg "starting usbnetd server in tethered mode" I
+			$START_SCRIPT tethered > /dev/null
+		else
+			msg "starting usbnetd server" I
+			$START_SCRIPT start > /dev/null
+		fi
+		
+		PERSIST=$(cat $START_FLAG|grep persist)
+		if [ ! -n "$PERSIST" ] ; then
+			msg "removing ENABLE_USBNET flag"
+			rm -f $START_FLAG
+		fi
+	fi
+}
+
+stop_usbnetd()
+{
+	$START_SCRIPT status > /dev/null
+	if [ $? == 0 ] ; then
+		msg "stopping usbnetd server" I
+		$START_SCRIPT stop > /dev/null
+	fi
+}
+
+case "$1" in
+
+	start)
+		start_usbnetd
+		;;
+
+	stop)
+		stop_usbnetd
+		;;
+	
+	restart)
+		stop_usbnetd
+		start_usbnetd
+		;;
+	
+	status)
+		status_usbnetd
+		exit $?
+		;;
+
+	*)
+		msg "Usage: $0 start" W
+		exit 1
+		;;
+esac
+
+exit 0
+

@@ -1,0 +1,175 @@
+#!/bin/sh
+_FUNCTIONS=/etc/rc.d/functions
+
+_CPUFREQCONF=/etc/sysconfig/cpufreq
+
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+[ -f ${_CPUFREQCONF} ] && . ${_CPUFREQCONF} || { msg "switching the governor failed: no configuration file found" C; exit 4; }
+
+DELAY=25 # Adding a delay when this is called at boot time in order to speed things up
+
+check()
+{
+    ACTUAL=`cat ${VALUE_PATH}` 
+    if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+        msg "${VALUE_PATH} is set to ${ACTUAL} instead of ${EXPECTED}" E
+        return 4
+    else
+        return 0
+    fi
+}
+
+set_governor()
+{
+    # Setting governor to mode
+
+    echo ${MODE} > ${_SCALING_GOV}
+    VALUE_PATH=${_SCALING_GOV}
+    EXPECTED=${MODE}
+	check
+	if [ $? -ne 0 ]; then
+        exit 4;
+    fi
+}
+
+set_frequencies()
+{
+    # Setting minimum freq to min cpu-supported freq
+    echo ${_CUR_CPU_MINFREQ} > ${_SCALING_MINFREQ}
+    EXPECTED=${_CUR_CPU_MINFREQ}
+    VALUE_PATH=${_SCALING_MINFREQ}
+	check
+	if [ $? -ne 0 ]; then
+		
+        exit 4;
+    fi
+    
+    echo ${_CUR_CPU_MAXFREQ} > ${_SCALING_MAXFREQ}
+    EXPECTED=${_CUR_CPU_MAXFREQ}
+    VALUE_PATH=${_SCALING_MAXFREQ}
+	check
+	if [ $? -ne 0 ]; then
+        exit 4;
+    fi
+}
+
+# Set conservative specific stuff (freq_step, sampling_down_factor,
+# up_threshold,...) 
+set_conservative()
+{
+    #Setting governor to conservative
+    MODE="conservative"
+    set_governor
+    
+    # Setting minimum freq to min cpu-supported freq
+    set_frequencies
+    
+    # Setting frequency step
+    echo "${FREQ_STEP}" >${_GOV_CONSERV}/freq_step
+    VALUE_PATH=${_GOV_CONSERV}/freq_step
+    EXPECTED=${FREQ_STEP}
+	check
+	if [ $? -ne 0 ]; then
+        exit 4;
+    fi
+    
+    # Setting Down factor
+    echo "${DOWN_FACTOR}" >${_GOV_CONSERV}/sampling_down_factor
+    VALUE_PATH=${_GOV_CONSERV}/sampling_down_factor
+    EXPECTED=${DOWN_FACTOR}
+	check
+	if [ $? -ne 0 ]; then
+        exit 4;
+    fi
+
+    # Setting up threshold
+    echo "${UP_THRESHOLD}" >${_GOV_CONSERV}/up_threshold
+    VALUE_PATH=${_GOV_CONSERV}/up_threshold
+    EXPECTED=${UP_THRESHOLD}
+	check
+	if [ $? -ne 0 ]; then
+        exit 4;
+    fi
+}
+
+set_powersave()
+{
+    #Setting governor to powersave
+    MODE="powersave"
+    set_governor
+    _CUR_CPU_MAXFREQ=${_CUR_CPU_MINFREQ}
+    set_frequencies
+}
+ 
+# Set ondemand specific stuff (sampling_rate, sampling_rate_max,
+# sampling_rate_min, ignore_nice_load, powersave_bias, up_threshold)
+set_ondemand()
+{
+    #Setting governor to ondemand
+    MODE="ondemand"
+    set_governor
+    set_frequencies
+
+    # Setting up threshold
+    echo "${UP_THRESHOLD}" >${_GOV_ONDEMAND}/up_threshold
+    VALUE_PATH=${_GOV_ONDEMAND}/up_threshold
+    EXPECTED=${UP_THRESHOLD}
+	check
+	if [ $? -ne 0 ]; then
+        exit 4;
+    fi
+}
+
+set_performance()
+{
+    #Setting governor to conservative
+    MODE="performance"
+    set_governor
+    set_frequencies
+}
+
+set_kernelprintk()
+{
+	echo 7 > /proc/sys/kernel/printk
+}
+
+set_renicekthreads()
+{
+	renice -n -20 `pidof events/0`
+}
+
+# This is a temporary measure meant to be here for a week or so (couple official builds)
+tmp_clean_logs()
+{
+	rm -f /var/local/log/messages_???_*.gz
+	rm -f /var/local/log/err_*
+}
+
+case "$1" in
+
+    start)
+
+		if [ "x`basename $0`" == "xgovernor" ]; then
+            msg "switching to ${MODE} governor" I
+		   	set_${MODE}
+		fi
+		set_renicekthreads
+		tmp_clean_logs
+        ;;
+
+  	stop)
+  		msg "switching to performance governor" I
+        set_performance
+        ;;
+  	restart|reload|force-reload)
+		msg "argument '$1' not supported" W
+		exit 3
+		;;
+	*)
+		msg "Usage: $0 start|stop" W
+		exit 1
+		;;
+
+esac
+

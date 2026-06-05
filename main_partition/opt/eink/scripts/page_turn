@@ -1,0 +1,127 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EIPUTS=/usr/sbin/eiputs
+[ -f ${_EIPUTS} ] && . ${_EIPUTS}
+
+_IMAGE_TIMINGS=/sys/devices/platform/eink_fb.0/image_timings
+_GET_KEY_CODES=/usr/bin/waitforkey
+
+_LOGO_SCREEN=5
+
+_IMAGE_TIMING_STRT=0
+_IMAGE_TIMING_PROC=0
+_IMAGE_TIMING_LOAD=0
+_IMAGE_TIMING_DISP=0
+_IMAGE_TIMING_STOP=0
+
+_KEY_WAIT_CODE_NEXT_MARIO=124  # Right-side NEXT button on Mario-based devices.
+_KEY_WAIT_CODE_NEXT_LUIGI=191  # Right-side NEXT button on Luigi-based devices.
+_KEY_QUIT_CODE_HOME_MARIO=98   # HOME button on Mario-based devices.
+_KEY_QUIT_CODE_HOME_LUIGI=102  # HOME button on Luigi-based devices.
+
+_KEY_WAIT_CODE=
+_KEY_QUIT_CODE=
+
+_KEY_CODE=
+_KEY_VALU=
+
+# At the moment, if it's not Mario, it's Luigi.
+#
+if ( is_Mario_Platform ); then
+    _KEY_WAIT_CODE=${_KEY_WAIT_CODE_NEXT_MARIO}
+    _KEY_QUIT_CODE=${_KEY_QUIT_CODE_HOME_MARIO}
+else
+    _KEY_WAIT_CODE=${_KEY_WAIT_CODE_NEXT_LUIGI}
+    _KEY_QUIT_CODE=${_KEY_QUIT_CODE_HOME_LUIGI}
+fi
+
+set_key_codes()
+{
+    _KEY_CODE=$1
+    _KEY_VALU=$2
+}
+
+get_key_codes()
+{
+    _KEY_CODES="`${_GET_KEY_CODES}`"
+    set_key_codes ${_KEY_CODES}
+}
+
+logo_screen()
+{
+    ${EIPS} -s ${_LOGO_SCREEN}
+}
+
+clear_screen()
+{
+    ${EIPS} -c
+}
+
+gc4_screen()
+{
+    # Flashing, GC4 update:  0x55 -> 85.
+    #
+    ${EIPS} -f -p 85
+}
+
+# Stop the framework, which also clears the screen, and the power daemon.
+#
+wait_framework_done
+stop_powerd
+
+# Loop until done.
+#
+_DONE=0
+
+while [ ${_DONE} -eq 0 ]; do
+
+    # Put up the logo screen and the timings summary.
+    #
+    logo_screen
+    puts_init
+
+    puts -b "~~~~ Page-turning Timings ~~~~"
+    puts -b
+    puts -b " power-on to start time:       ${_IMAGE_TIMING_STRT}ms"
+    puts
+    puts -b " framebuffer processing time:  ${_IMAGE_TIMING_PROC}ms"
+    puts -b " framebuffer loading time:     ${_IMAGE_TIMING_LOAD}ms"
+    puts -b " start display update time:    ${_IMAGE_TIMING_DISP}ms"
+    puts
+    puts -b " total time:                   ${_IMAGE_TIMING_STOP}ms"
+    puts
+    puts -b "Hit NEXT-PAGE to continue or ..."
+    puts    "... HOME to quit."
+
+    # Get the next key code and its value.
+    #
+    get_key_codes
+    
+    case ${_KEY_CODE} in
+        
+        # NEXT -> Issue a flashing GC4 update and save the timing information.
+        #
+        ${_KEY_WAIT_CODE})
+            gc4_screen
+        
+            _IMAGE_TIMING_STRT=`awk '{ print $1 }' ${_IMAGE_TIMINGS}`
+            _IMAGE_TIMING_PROC=`awk '{ print $2 }' ${_IMAGE_TIMINGS}`
+            _IMAGE_TIMING_LOAD=`awk '{ print $3 }' ${_IMAGE_TIMINGS}`
+            _IMAGE_TIMING_DISP=`awk '{ print $4 }' ${_IMAGE_TIMINGS}`
+            _IMAGE_TIMING_STOP=`awk '{ print $5 }' ${_IMAGE_TIMINGS}`
+        ;;
+        
+        # HOME -> All done.
+        #
+        ${_KEY_QUIT_CODE})
+            _DONE=1
+        ;;
+    
+    esac
+
+done
+
+clear_screen

@@ -1,0 +1,10 @@
+#!/bin/sh
+
+if [ -z "$1" ]; then
+    echo "Usage:"
+    echo "    $0 'text to speak'"
+    exit
+fi
+
+echo '{ id=(0), text="'"$(echo $1 | sed -e 's/\([\\"]\)/\\\1/g')"'" }' \
+    | lipc-hash-prop com.lab126.ttsd playSnippetNow

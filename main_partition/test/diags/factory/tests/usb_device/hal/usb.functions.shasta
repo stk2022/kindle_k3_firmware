@@ -1,0 +1,403 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   usb.functions.shasta
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   07/21/09
+#
+#  Copyright 2009, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#       Shasta platform USB Device HAL layer for USB Device diagnostic scripts.  
+#       This file defines various HAL definitions used to export and 
+#       unexport the device volume
+#
+#   This file contains a HAL for the Mario platform, which includes:
+#
+#   Global Variables
+#       DEVICE_USER_STORE           - Points to device user store volume
+#       USB_EXPORT_VOLUME           - Points to volume exported by USB
+#       DEVICE_USB_EXPORT_ENTRY     - Points to system export location for
+#                                       specifying export volume
+#       USB_PLUGGED_IN_ENTRY        - Points to sys entry to cat for USB
+#                                       plugged-in information
+#       
+#   Routines
+#       un_export_usb_volumes()         - Unexport the device volume
+#       export_usb_volumes()            - Export the device volume
+#       usb_delete_from_export_volume() - Delete file from USB export volume
+#       usb_copy_to_export_volume()     - Copy file to USB export volume
+#       display_usb_plugin_request()    - Display dialog asking user to plug USB in
+#       do_export_usb_volumes()         - Perform all required to export usb volumes,
+#                                           including displaying dialog
+#       usb_serial_enter()              - Use serial-over-usb mode for stdin/stdout
+#       usb_serial_exit()               - Remove serial-over-usb and use ttyS0 for stdin/stdout
+#       do_usb_serial()                 - Enable/disable serial-over-usb
+#       usb_hal_init()                  - Hal initialization routine
+#       usb_hal_exit()                  - Hal teardown routine
+#
+######################################################################
+
+######################################################################
+# Function:    un_export_usb_volumes
+# Purpose:     Tells the USB driver to un-export the device volume and
+#               then remounts the volume to its mountpoint.
+# Parameters:  none
+# Returns:     none
+# Side Effect: Unexports the exported USB volume
+######################################################################
+un_export_usb_volumes()
+{
+    # Un-export usb mount drive mode and remount the US volume
+    echo "" > "$DEVICE_USB_EXPORT_ENTRY"
+    sleep 2
+    mount "$USB_EXPORT_VOLUME"
+    vmsg "Unexported $PRODUCT_NAME volume for drive mode test."
+}
+
+
+######################################################################
+# Function:    export_usb_volumes
+# Purpose:     Unmounts the target volume to be exported (mmcblk0p4)
+#               and then tells USB driver to export it.
+# Parameters:  none
+# Returns:     none
+# Side Effect: Exports the USB volume as a mass storage device
+######################################################################
+export_usb_volumes()
+{
+    # Export USB User Store to usb mount drive mode
+    umount "$USB_EXPORT_VOLUME"
+    echo "$DEVICE_USER_STORE" > "$DEVICE_USB_EXPORT_ENTRY"
+    vmsg "Exported $PRODUCT_NAME volume for drive mode test."
+}
+
+
+######################################################################
+# Function:     usb_delete_from_export_volume
+# Purpose:      Deletes the file specified by input parameter filename
+#               from the USB volume that gets exported by the
+#               export_usb_volumes()
+# Parameters:   filename - filename (full path) of file to be copied
+# Returns:      failure - inidicates whether file delete failed or not
+#                   0 - file found and deleted OK
+#                   1 - file delete failed - can't find usb export directory
+#                   2 - file delete failed - can't find source file
+######################################################################
+usb_delete_from_export_volume()
+{
+    src_file="$1"
+    target_file="${USB_EXPORT_VOLUME}/${src_file}"
+    if [ -d "$USB_EXPORT_VOLUME" ]; then
+        if [ -f "${target_file}" ]; then
+            echo "Deleted $target_file"
+            rm -rf "$target_file" > /dev/null 2>&1
+            return 0
+        else
+            echo "Error deleting $src_file from $USB_EXPORT_VOLUME."
+            echo "$USB_EXPORT_VOLUME cant be found."
+            return 1
+        fi
+    else
+        echo "Error deleting $src_file from $USB_EXPORT_VOLUME."
+        echo "$target_file cant be found."
+        return 2
+    fi
+
+}
+
+######################################################################
+# Function:     usb_copy_to_export_volume
+# Purpose:      Copies the file specified by input parameter filename
+#               to the volume that gets exported by the export_usb_volumes()
+#               call.
+# Parameters:   filename - filename (full path) of file to be copied
+#               dst_file - if present, destination filename
+#                           if not present, source filename is used for
+#                           destination filename.
+# Returns:      failure - inidicates whether file copy failed or not
+#                   0 - file copied OK
+#                   1 - file copy failed - can't find usb export directory
+#                   2 - file copy failed - can't find source file
+######################################################################
+usb_copy_to_export_volume()
+{
+    src_file="$1"
+    if [ $# -eq 2 ]; then
+        dst_file="$2"
+    else
+        dst_file="$src_file"
+    fi
+
+    if [ -f "$src_file" ] || [ -d "$src_file" ]; then
+        if [ -d "$USB_EXPORT_VOLUME" ]; then
+            cp -ar "$src_file" "${USB_EXPORT_VOLUME}/${dst_file}" > /dev/null 2>&1
+            return 0
+        else
+            echo "Error copying $src_file to $USB_EXPORT_VOLUME."
+            echo "$USB_EXPORT_VOLUME cant be found."
+            return 1
+        fi
+    else
+        echo "Error copying $src_file to $USB_EXPORT_VOLUME."
+        echo "$src_file cant be found."
+        return 2
+    fi
+}
+
+
+######################################################################
+# Function:	display_usb_plugin_request
+# Purpose:	Displays a dialog telling user to plug in USB cable.
+#		Waits for user to hit success key to continue.
+# Parameters:	name - name of test to print in banner of message
+#		device - name of device to connect the Kindle to
+#	  	typically either "PC" or "wall charger"
+# Returns:	none
+######################################################################
+display_usb_plugin_request ()
+{
+    clear_screen
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    print_center_text "$1" "$base" 8 4
+
+    ${DOUT} -n 4 7 "Using a USB cable, connect the device"
+    center_text "to a $2" 8 "$base"
+    ${DOUT} -n $? 9 "to a $2"
+    ${DOUT} 4 11 "Once connected, press $SUCCESS_KEY_LABEL to continue..."
+
+    # wait for any key
+    wait_for_key $SUCCESS_KEY
+}
+
+
+######################################################################
+# Function:    is_usb_plugged_in
+# Purpose:     Return whether the USB cable is connected or not
+# Parameters:  none
+# Returns:     0 - USB not connected
+#              1 - USB connected
+######################################################################
+is_usb_plugged_in()
+{
+    if [ -f "$USB_PLUGGED_IN_ENTRY" ]; then
+        USB_PLUGGED_IN=`cat $USB_PLUGGED_IN_ENTRY`
+        if [ $USB_PLUGGED_IN -ne 0 ]; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+######################################################################
+# Function:     do_export_usb_volumes
+# Purpose:      Exports a usb volume as a mass storage device.
+#               First checks to see if USB cable is plugged in.  If not,
+#               this displays a dialog telling user to plug in USB cable,
+#               waits for user to hit success key to continue,
+#               then exports device volumes as mass storage devices
+#               over USB
+# Parameters:   name - name of test to print in banner of message
+# Returns:      none
+# Assumptions:  USB plug status is detected by checking current limit
+#               and if it's non-zero, we're hooked up to "something".
+#               That's the best method we have right now....
+# Side Effect:  Volume is unmounted locally and exported as mass storage
+#               device.
+######################################################################
+do_export_usb_volumes()
+{
+    # If the USB cable is not plugged in, ask user to do it
+    is_usb_plugged_in
+    USB_PLUGGED_IN=$?
+        
+    if [ $USB_PLUGGED_IN -eq 0 ]; then
+        # Ask user to plug it in
+        display_usb_plugin_request "$1" "PC"
+    fi
+
+    # Export the volume over USB
+    vmsg "Exporting USB volumes..."
+    export_usb_volumes
+}
+
+
+export USB_SERIAL_IS_ACTIVE=0
+######################################################################
+# Function:     is_usb_serial_enabled
+# Purpose:      Return 0 if serial-over-usb is enabled, 1 if not
+# Parameters:   none
+# Returns:      0 - serial-over-usb is enabled
+#               1 - serial-over-usb is NOT enabled
+######################################################################
+is_usb_serial_enabled()
+{
+    if [ $USB_SERIAL_IS_ACTIVE -eq 0 ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+
+######################################################################
+# Function:     usb_serial_enter
+# Purpose:      Enter serial-over-usb mode and switch from ttyS0 to USB
+# Parameters:   none
+# Returns:      none
+# Side Effect:  Changes stdin and stdout from serial port to USB port
+######################################################################
+usb_serial_enter()
+{
+    # Fire up usb serial
+    usbserial &
+
+    # Redirect stdin and out to use usbserial
+    exec >/dev/ttygserial </dev/ttygserial
+
+}
+
+
+######################################################################
+# Function:     usb_serial_exit
+# Purpose:      Exit serial-over-usb mode and switch back to ttyS0
+# Parameters:   none
+# Returns:      none
+# Side Effect:  Changes stdin and stdout from USB port to serial port
+# Side Effect:  Changes stdin and stdout from serial port to USB port
+######################################################################
+usb_serial_exit()
+{
+    # Remove USB serial
+    usbserial -r
+
+    # redirect back
+    exec  >/dev/ttymxc/0 </dev/ttymxc/0;
+}
+
+
+######################################################################
+# Function:     do_usb_serial
+# Purpose:      Display options to allow user to enable or disable
+#               serial-over-usb.
+# Parameters:   none
+# Returns:      none
+# Side Effect:  Can change stdin and stdout from serial port to USB port
+######################################################################
+do_usb_serial()
+{
+    # Tell user to remove USB cable
+
+    # Allow user to enable or disable serial-over-usb
+    clear_screen
+    print_center_text "Serial-Over-USB Mode" "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 5 4
+
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        if [ is_usb_serial_enabled ]; then
+            IN_USB_SERIAL_MODE="OFF"
+            SWITCH_VERB="ENABLE"
+        else
+            IN_USB_SERIAL_MODE="ON"
+            SWITCH_VERB="DISABLE"
+        fi
+        ${DOUT} -n 5 7 "Serial Over USB is $IN_USB_SERIAL_MODE"
+        ${DOUT} -n 5 11 "Press $SUCCESS_KEY_LABEL to $SWITCH_VERB Serial Over USB"
+        ${DOUT} 5 13 "Press $EXIT_KEY_LABEL to return to main menu"
+
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                if [ is_usb_serial_enabled ]; then
+                    usb_serial_exit
+                else
+                    usb_serial_enter
+                fi
+                erase_line 7
+                erase_line 11
+                ;;
+            $EXIT_KEY)
+                DONE=1;
+                ;;
+            *)
+                ;;
+        esac
+    done
+}
+
+
+######################################################################
+# Function:    usb_hal_init
+# Purpose:     Initialization code for the usb device hal layer
+# Parameters:  none
+# Returns:     none
+######################################################################
+usb_hal_init()
+{
+    #
+    # Nothing to initialize for USB hal init
+    #
+    vmsg "usb_hal_init()"
+    if [ "$USB_HAL_INITED" != "1" ]; then
+        # Get user store partition location (DEVICE_USER_STORE)
+        _USER_STORE_PARTITION="`kdb get system/driver/filesystem/DEV_PART_USERSTORE`"
+        _DEVICE_ROOT="`kdb get system/driver/filesystem/DEV_ROOT`"
+        export DEVICE_USER_STORE="${_DEVICE_ROOT}${_USER_STORE_PARTITION}"
+
+        # Get filesystem location for USB export volume
+        export USB_EXPORT_VOLUME="`kdb get system/driver/filesystem/MP_USERSTORE`"
+        
+        # Get the USB Export Entry in filesystem
+        export DEVICE_USB_EXPORT_ENTRY="`kdb get system/driver/usb/gadget/SYS_GADGET_FILE`"
+
+        # Get the USB Plugged In Entry (to determine if USB is plugged in
+        #export USB_PLUGGED_IN_ENTRY="` kdb get system/driver/charger/SYS_CURRENT_LIMIT`"
+        # Temp until this gets plugged into kdb
+        export USB_PLUGGED_IN_ENTRY="/sys/devices/platform/fsl-usb2-udc/connected"
+        #echo "USB Plugged In Entry: ${USB_PLUGGED_IN_ENTRY}"
+
+        export USB_HAL_INITED=1
+    else
+        vmsg "USB_HAL_INITED was $USB_HAL_INITED."
+    fi
+}
+
+
+######################################################################
+# Function:    usb_hal_exit
+# Purpose:     Cleanup / exit code for the usb device hal layer
+# Parameters:  none
+# Returns:     none
+######################################################################
+usb_hal_exit()
+{
+    #
+    # Nothing to uninitialize for USB hal init
+    #
+    vmsg "usb_hal_exit()"
+}
+
+
+# Don't include HAL more than once
+if [ "x$_USB_DEVICE_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+
+#
+# Partition to export for export tests
+#
+export USB_HAL_INITED
+
+export USB_FILE_STORAGE_DRIVER="g_file_storage"
+export USB_OTG_DRIVER="arcotg_udc"
+export DEVICE_USER_STORE="/dev/mmcblk0p4"
+export USB_EXPORT_VOLUME="/mnt/base-us"
+export USB_EXPORT_EX_VOLUME="/mnt/us"
+export DEVICE_USB_EXPORT_ENTRY="/sys/devices/platform/fsl-usb2-udc/gadget/gadget-lun0/file"
+export USB_PLUGGED_IN_ENTRY="/sys/devices/platform/fsl-usb2-udc/ichrg_setting"
+
+export _USB_DEVICE_HAL_INCLUDED=1
+

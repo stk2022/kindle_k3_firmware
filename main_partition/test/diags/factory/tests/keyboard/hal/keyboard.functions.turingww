@@ -1,0 +1,205 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   keyboard.functions.turing
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   08/01/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Turing Keyboard HAL layer for diagnostic keyboard scripts.  This file
+#   defines various HAL routines that map to the Turing keyboard
+#
+#   Data Structures
+#       KEY_TEST_ARRAY - array of keys by keycodes that are to be tested
+#
+#   Routines
+#       label_to_keycode()  - converts a key label to its keycode value
+#       keycode_to_label()  - converts a keycode to char label on key
+#       keyboard_hal_init() - Keyboard hal init
+#       keyboard_hal_exit() - Keyboard hal exit
+#
+######################################################################
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+#
+# Key test array (keys to test)
+# In order of right to left, top to bottom
+#
+export KEY_TEST_ARRAY="$KEY_1 $KEY_2 $KEY_3 $KEY_4 $KEY_5 $KEY_6 $KEY_7 $KEY_8 $KEY_9 $KEY_0 $KEY_Q $KEY_W $KEY_E $KEY_R $KEY_T $KEY_Y $KEY_U $KEY_I $KEY_O $KEY_P $KEY_A $KEY_S $KEY_D $KEY_F $KEY_G $KEY_H $KEY_J $KEY_K $KEY_L $KEY_BACKSPACE $KEY_Z $KEY_X $KEY_C $KEY_V $KEY_B $KEY_N $KEY_M $KEY_DOT $KEY_SLASH $KEY_ENTER $KEY_SHIFT $KEY_SPACE $KEY_FONT $KEY_SYM"
+
+
+######################################################################
+# Function:     label_to_keycode
+# Purpose:      Return the keycode for the key cooresponding to the
+#               passed in label string.
+# Paramters:    String/character representing the key
+# Returns:      Echo's the keycode
+######################################################################
+label_to_keycode()
+{
+    case "$1" in
+
+    1) echo $KEY_1 ;;
+    2) echo $KEY_2 ;;
+    3) echo $KEY_3 ;;
+    4) echo $KEY_4 ;;
+    5) echo $KEY_5 ;;
+    6) echo $KEY_6 ;;
+    7) echo $KEY_7 ;;
+    8) echo $KEY_8 ;;
+    9) echo $KEY_9 ;;
+    0) echo $KEY_0 ;;
+    Q) echo $KEY_Q ;;
+    W) echo $KEY_W ;;
+    E) echo $KEY_E ;;
+    R) echo $KEY_R ;;
+    T) echo $KEY_T ;;
+    Y) echo $KEY_Y ;;
+    U) echo $KEY_U ;;
+    I) echo $KEY_I ;;
+    O) echo $KEY_O ;;
+    P) echo $KEY_P ;;
+    A) echo $KEY_A ;;
+    S) echo $KEY_S ;;
+    D) echo $KEY_D ;;
+    F) echo $KEY_F ;;
+    G) echo $KEY_G ;;
+    H) echo $KEY_H ;;
+    J) echo $KEY_J ;;
+    K) echo $KEY_K ;;
+    L) echo $KEY_L ;;
+    Z) echo $KEY_Z ;;
+    X) echo $KEY_X ;;
+    C) echo $KEY_C ;;
+    V) echo $KEY_V ;;
+    B) echo $KEY_B ;;
+    N) echo $KEY_N ;;
+    M) echo $KEY_M ;;
+
+    #BACKSPACE) echo $KEY_BACKSPACE ;;
+    #DOT) echo $KEY_DOT ;;
+    #SLASH) echo $KEY_SLASH ;;
+    #ENTER) echo $KEY_ENTER ;;
+    #SHIFT) echo $KEY_SHIFT ;;
+    #ALT) echo $KEY_ALT ;;
+    #SPACE) echo $KEY_SPACE ;;
+    #aA) echo $KEY_FONT ;;
+    #@) echo $KEY_AT ;;
+    #SYM) echo $KEY_SYM ;;
+
+    *) echo "?" ;;
+
+    esac
+}
+
+
+######################################################################
+# Function:     keycode_to_label
+# Purpose:      Return the string representing the passed-in keycode
+# Paramters:    keycode of key to get label for
+# Returns:      Echo's the key name string
+######################################################################
+keycode_to_label()
+{
+    case "$1" in
+
+    $KEY_1) echo "1" ;;
+    $KEY_2) echo "2" ;;
+    $KEY_3) echo "3" ;;
+    $KEY_4) echo "4" ;;
+    $KEY_5) echo "5" ;;
+    $KEY_6) echo "6" ;;
+    $KEY_7) echo "7" ;;
+    $KEY_8) echo "8" ;;
+    $KEY_9) echo "9" ;;
+    $KEY_0) echo "0" ;;
+    $KEY_Q) echo "Q" ;;
+    $KEY_W) echo "W" ;;
+    $KEY_E) echo "E" ;;
+    $KEY_R) echo "R" ;;
+    $KEY_T) echo "T" ;;
+    $KEY_Y) echo "Y" ;;
+    $KEY_U) echo "U" ;;
+    $KEY_I) echo "I" ;;
+    $KEY_O) echo "O" ;;
+    $KEY_P) echo "P" ;;
+    $KEY_A) echo "A" ;;
+    $KEY_S) echo "S" ;;
+    $KEY_D) echo "D" ;;
+    $KEY_F) echo "F" ;;
+    $KEY_G) echo "G" ;;
+    $KEY_H) echo "H" ;;
+    $KEY_J) echo "J" ;;
+    $KEY_K) echo "K" ;;
+    $KEY_L) echo "L" ;;
+    $KEY_BACKSPACE) echo "DEL" ;;
+    $KEY_Z) echo "Z" ;;
+    $KEY_X) echo "X" ;;
+    $KEY_C) echo "C" ;;
+    $KEY_V) echo "V" ;;
+    $KEY_B) echo "B" ;;
+    $KEY_N) echo "N" ;;
+    $KEY_M) echo "M" ;;
+    $KEY_DOT) echo "." ;;
+    $KEY_SLASH) echo "/" ;;
+    $KEY_ENTER) echo "ENTER" ;;
+    $KEY_SHIFT) echo "SHIFT" ;;
+    $KEY_ALT) echo "ALT" ;;
+    $KEY_SPACE) echo "SPACE" ;;
+    $KEY_FONT) echo "Aa" ;;
+    #$KEY_AT) echo "AT" ;;
+    $KEY_SYM) echo "SYM" ;;
+
+    $BUTTON_LEFT_PREV_PAGE)     echo "Left Prev Page" ;;
+    $BUTTON_LEFT_NEXT_PAGE)     echo "Left Next Page" ;;
+    $BUTTON_HOME)               echo "Home" ;;
+    $BUTTON_RIGHT_NEXT_PAGE)    echo "Right Next Page" ;;
+    $BUTTON_MENU)               echo "Menu" ;;
+    $BUTTON_BACK)               echo "Back" ;;
+    $VOLUME_UP)                 echo "Volume Up" ;;
+    $VOLUME_DOWN)               echo "Volume Down" ;;
+
+    *) echo "?" ;;
+
+    esac
+}
+
+
+
+######################################################################
+# Function:     keyboard_hal_init
+# Purpose:      Keyboard hal initialization routine.  Nothing to do here.
+# Paramters:    none
+# Returns:      none
+######################################################################
+keyboard_hal_init()
+{
+    #
+    # Nothing to initialize for keyboard hal
+    #
+    vmsg "keyboard_hal_init()"
+}
+
+
+######################################################################
+# Function:     keyboard_hal_exit
+# Purpose:      Keyboard hal exit routine.  Nothing to do here.
+# Paramters:    none
+# Returns:      none
+######################################################################
+keyboard_hal_exit()
+{
+    #
+    # Nothing to uninitialize for keyboard hal
+    #
+    vmsg "keyboard_hal_exit()"
+}

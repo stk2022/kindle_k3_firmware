@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+ifconfig usb0 192.168.15.244 netmask 255.255.255.0

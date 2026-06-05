@@ -1,0 +1,33 @@
+#!/bin/sh
+# reports the gasgauge/battery level on boot
+
+GASGAUGE_DEV=/dev/i2c/0
+GASGAUGE_INFO="`which gasgauge-info`"
+
+_FEATURE=/etc/rc.d/features
+[ -f ${_FEATURE} ] && . ${_FEATURE}
+
+
+if ( is_PROTO ) || [ -e /mnt/us/DO_NOT_KILL_UART ];  then 
+	echo 0 > /sys/devices/platform/mxcintuart.0/uart_clk_state
+else
+	echo 0 > /dev/null
+fi
+
+
+case "$1" in
+	start)
+		if [ -c "${GASGAUGE_DEV}" -a -x "${GASGAUGE_INFO}" ]; then
+			echo -n "Battery Level: " 
+			${GASGAUGE_INFO} -s
+		fi
+	;;
+
+	*)
+	msg "Usage: $0 start" W
+	exit 1
+	;;
+esac
+
+exit 0
+

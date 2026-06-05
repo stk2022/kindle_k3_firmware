@@ -1,0 +1,121 @@
+#!/bin/sh
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+_IDME_FUNCTIONS=/usr/sbin/idme_functions
+[ -f ${_IDME_FUNCTIONS} ] && . ${_IDME_FUNCTIONS}
+
+export DISPLAY=:0.0
+export LUA_PATH="/usr/lib/?.lua;/usr/lib/?/init.lua"
+MARIO_XKB="/usr/share/X11/xkb/mario.xkb"
+KB_DEV="/dev/input/event0"
+KB_OPTIONS="xkbrules=mario,xkbmodel=nell,xkblayout=us"
+FIVEWAY_DEV="/dev/input/event1"
+FIVEWAY_OPTIONS="xkbrules=mario,xkbmodel=nell,xkblayout=us"
+KEEP_AWAKE=/etc/rc.d/keep_awake
+KEEP_AWAKE_PIDFILE=/var/run/`basename ${KEEP_AWAKE}`.pid
+
+if [ -n "$1" ]; then
+   ACTION="$1"
+else
+   ACTION="mario"
+fi
+
+start_x()
+{
+    # Ensure that the Framework is stopped (this will also wake the
+    # various input devices and the screen).
+    #
+    wait_framework_done
+    
+    # Ensure that the eInk HAL is in the right state (8bpp) for X usage.
+    #
+    if [ ${SCREEN_DEPTH} -ne 8 ]; then
+      echo "*** Switching to byte per pixel mode ***"
+      ${EINK_RESTART} 0 8
+    fi
+}
+
+start_keep_awake()
+{
+    if [ -x "${KEEP_AWAKE}" ]; then
+        ${KEEP_AWAKE} &
+        if [ $? ] ; then
+            echo $! >${KEEP_AWAKE_PIDFILE}
+            prevent_screen_sleep
+        fi
+    fi
+}
+
+stop_keep_awake()
+{
+    if [ -r "${KEEP_AWAKE_PIDFILE}" ]; then
+        kill `cat ${KEEP_AWAKE_PIDFILE}`
+        allow_screen_sleep
+    fi
+}
+
+case $ACTION in
+   mario )
+      # Stop the Framework and get the eInk HAL into the right state.
+      start_x
+
+      # needed to run the mkfont steps
+      mntroot_rw
+      # (cd /usr/java/lib/fonts ; mkfontscale )
+      # mkfontdir /usr/lib/X11/fonts/misc/
+
+      # Create directory for compiled keyboard maps, if it does not exist.
+      if [ ! -d /usr/share/X11/xkb/compiled ]; then
+         mkdir /usr/share/X11/xkb/compiled
+      fi
+
+      Xfbdev -nolisten tcp -keybd evdev,,device=$KB_DEV,$KB_OPTIONS -keybd evdev,,device=$FIVEWAY_DEV,$FIVEWAY_OPTIONS &
+      sleep 1
+      einkdamage -display $DISPLAY -kind 3 &
+      sleep 1
+      # Set the keypad to mario/Framework compatibility
+      # xkbcomp $MARIO_XKB $DISPLAY 2> /dev/null
+      
+      # For now, for X development, prevent powerd from sleeping the various devices.
+      start_keep_awake
+   ;;
+   framework )
+      ${FRAMEWORK} startx
+   ;;
+   term )
+      # Start rxvt program
+      if ( is_Turing ); then
+         TERM_GEOM="49x33"
+      elif ( is_Nell ); then
+         TERM_GEOM="68x49"
+      else
+         TERM_GEOM="40x24"
+      fi
+      rxvt -fn fixed -display $DISPLAY -geometry "$TERM_GEOM" &
+
+      # Put focus on rxvt window after waiting for app to start.
+      sleep 5
+      `xwininfo -root -tree | grep -m1 rxvt | sed -e 's/.*\(0x[0-9,A-F,a-f]*\).*/focus -window \1/g'`
+   ;;
+   demos )
+      xlogo -display $DISPLAY -geometry 200x200+400+0 &
+      xload -display $DISPLAY -fn fixed -update 1 &
+      xclock -display $DISPLAY -geometry 600x600+0+100 -norender -update 1 &
+      sleep 1
+      maze -d $DISPLAY -g +10+500 &
+      xclock -display $DISPLAY -geometry 256x256+344+544 -update 2 &
+   ;;
+   stop )
+      stop_keep_awake
+      
+      X_PROCESS=`ps -ef | grep -m1 Xfbdev | grep -v grep | sed -e 's/[^0-9]*\([0-9]*\).*/\1/g'`
+      if [ -n "$X_PROCESS" ]; then
+         echo "Bye X"
+         kill -9 $X_PROCESS > /dev/null 2> /dev/null
+         eips -c
+      else
+         echo "X is not running!"
+      fi
+   ;;
+esac
+

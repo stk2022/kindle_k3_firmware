@@ -1,0 +1,219 @@
+#!/bin/sh
+
+export PATH=/usr/sbin:${PATH}
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_VIDEO=/etc/init.d/video
+
+_KERNEL_VERSION=`uname -r`
+_MODULE_BASE=/lib/modules/${_KERNEL_VERSION}
+_EINK_BASE=${_MODULE_BASE}/kernel/drivers/video/eink
+
+_EINK_COMMANDS_VERSION=${EINK_PROC}/commands_version
+
+_EINK_CTRL=/sys/devices/platform/eink_fb.0
+_EINK_ROM_SELECT=${_EINK_CTRL}/eink_rom_select
+_EINK_FLASH_MODE=${_EINK_CTRL}/flash_mode
+_EINK_IGNORE_HW_READY=${_EINK_CTRL}/ignore_hw_ready
+_ROM_SELECT=
+
+_EINK_ROM_COMMANDS=1
+_EINK_FLASH_MODE_DISABLE=0
+_EINK_FLASH_MODE_ENABLE=1
+_EINK_IGNORE_HRDY=1
+_FLASH_MODE=
+
+_VERSIONOFFSET=0
+_VERSIONLEN=4
+
+_EINK_LOGLEVEL=0xFFFF9000
+_REQ_FILE_SIZE=2182
+_COMMANDS_ONLY=1
+
+_OUTFILE=/tmp/.b-b.out
+
+_COMMANDS_EINK_VERSION=
+_COMMANDS_FILE_VERSION=
+
+_COMMANDS_FILE_CKSUM_EMBEDDED=
+_COMMANDS_FILE_CKSUM_COMPUTED=
+
+_COMMANDS_FILE=`ls /opt/eink/images/cmd0047_*.bin`
+
+get_eink_commands_version()
+{
+    _COMMANDS_EINK_VERSION="`cat ${_EINK_COMMANDS_VERSION}`"
+}
+
+get_file_commands_version()
+{
+    _COMMANDS_FILE_VERSION="`eu commands ${_COMMANDS_FILE}`"
+}
+
+get_file_commands_cksum()
+{
+    _COMMANDS_FILE_CKSUM_EMBEDDED="`eu commands -e ${_COMMANDS_FILE}`"
+    _COMMANDS_FILE_CKSUM_COMPUTED="`eu commands -c ${_COMMANDS_FILE}`"
+}
+
+# Use the built-in bootstrapping file by default, but allow it to be
+# overridden.
+#
+if [ $# != 0 ]; then
+    _COMMANDS_FILE="$1"
+    
+    _EINK_LOGLEVEL=0
+    _REQ_FILE_SIZE=131072
+    _COMMANDS_ONLY=0
+fi
+
+# Do some preflighting and exit if all is not well.
+#
+if [ ! -f "${_COMMANDS_FILE}" ]; then
+    msg "commands file ${_COMMANDS_FILE} could not be found" E
+    exit ${EINK_ERR_RECOVERABLE}
+fi
+
+_VERSIONINFO=`hexdump -s ${_VERSIONOFFSET} -n ${_VERSIONLEN} -e '1/1 "%02X"' ${_COMMANDS_FILE}`
+_SIZE="`cat ${_COMMANDS_FILE} | wc -c | sed 's/^  *//'`"
+
+if [ ${_COMMANDS_ONLY} -eq 1 ]; then
+    if [ ${_SIZE} -lt ${_REQ_FILE_SIZE} ]; then
+        msg "commands file ${_COMMANDS_FILE} is not the required size (needs to be ${_REQ_FILE_SIZE} bytes or more)" E
+        exit ${EINK_ERR_RECOVERABLE}
+    fi
+else
+    if [ ${_SIZE} -gt ${_REQ_FILE_SIZE} ]; then
+        msg "commands file ${_COMMANDS_FILE} is not the required size (needs to be ${_REQ_FILE_SIZE} bytes or less)" E
+        exit ${EINK_ERR_RECOVERABLE}
+    fi
+fi
+
+# Stop all video-related activity after we've told Broadsheet to ignore HRDY if the Broadsheet
+# eInk HAL module is currently loaded.
+#
+if [ -f ${_EINK_IGNORE_HW_READY} ]; then
+    echo ${_EINK_IGNORE_HRDY} >${_EINK_IGNORE_HW_READY}
+fi
+
+${_VIDEO} stop_all
+
+# Load the Broadsheet eInk HAL module in bootstapping mode.
+#
+insmod ${_EINK_BASE}/hal/eink_fb_hal.ko einkfb_logging=${_EINK_LOGLEVEL}
+_RES_HAL=$?
+insmod ${_EINK_BASE}/hal/eink_fb_hal_broads.ko bs_bootstrap=1
+_RES_CONTROLLER=$?
+
+if [ ${_RES_HAL} -ne 0 ] || [ ${_RES_CONTROLLER} -ne 0 ]; then
+    msg "failed to load eInk HAL into bootstrapping mode" C
+    exit ${EINK_ERR_UNRECOVERABLE}
+fi
+
+# Ensure that the commands part of the eInk ROM is available and selected.
+#
+if [ -f ${_EINK_ROM_SELECT} ]; then
+    echo ${_EINK_ROM_COMMANDS} >${_EINK_ROM_SELECT}
+else
+    msg "commands area couldn't be selected" C
+    exit ${EINK_ERR_UNRECOVERABLE}
+fi
+
+# Ensure that we're in flash mode.
+#
+if [ -f ${_EINK_FLASH_MODE} ]; then
+    echo ${_EINK_FLASH_MODE_ENABLE} >${_EINK_FLASH_MODE}
+else
+    msg "flash mode couldn't be enabled" C
+    exit ${EINK_ERR_UNRECOVERABLE}
+fi
+
+# Double check everything!
+#
+_ROM_SELECT=`cat ${_EINK_ROM_SELECT}`
+_FLASH_MODE=`cat ${_EINK_FLASH_MODE}`
+
+if [ ${_ROM_SELECT} -ne ${_EINK_ROM_COMMANDS} ] || [ ${_FLASH_MODE} -ne ${_EINK_FLASH_MODE_ENABLE} ]; then
+    echo "error: commands area flashing couldn't be enabled"
+    exit 2
+fi
+
+# Print out existing (controller's) commands info (could be garbage, which is why we're in
+# bootstapping mode).
+#
+get_eink_commands_version
+
+msg "Existing commands version:" I
+msg "  ${_COMMANDS_EINK_VERSION}" I
+
+# Print out commands file's info.
+#
+msg "Commands name:" I
+msg "  ${_COMMANDS_FILE}" I
+
+msg "Commands size:" I
+msg "  ${_SIZE} bytes" I
+
+get_file_commands_version
+
+msg "Commands version:" I
+msg "  ${_COMMANDS_FILE_VERSION}" I
+
+get_file_commands_cksum
+
+msg "Commands checksum:" I
+msg "  embedded is ${_COMMANDS_FILE_CKSUM_EMBEDDED}" I
+msg "  computed is ${_COMMANDS_FILE_CKSUM_COMPUTED}" I
+
+# Flash commands.
+#
+_MSG="Updating commands..."
+msg "${_MSG}flashing" I
+
+dd if=${_COMMANDS_FILE} of=${EINK_ROM} bs=${_SIZE} count=1
+_RES=$?
+
+if [ ${_RES} -eq 0 ]; then
+
+    msg "${_MSG}verifying" I
+    
+    rm -f ${_OUTFILE}.rom 2>/dev/null
+    touch ${_OUTFILE}.rom
+    dd if=${EINK_ROM} of=${_OUTFILE}.rom bs=1 count=${_VERSIONLEN} skip=${_VERSIONOFFSET}
+    _NEWVERSIONINFO=`hexdump -e '1/1 "%02X"' "${_OUTFILE}.rom"`
+
+    if [ "${_VERSIONINFO}" != "${_NEWVERSIONINFO}" ]; then
+
+        msg "${_MSG}ERROR:" C
+        msg "  ${_VERSIONINFO} does not equal ${_NEWVERSIONINFO}" C
+        
+        _RES=${EINK_ERR_UNRECOVERABLE}
+
+    else
+        
+        get_eink_commands_version
+        
+        msg "${_MSG}OK:" I
+        msg "  ${_COMMANDS_EINK_VERSION}" I
+        
+        if [ ${_COMMANDS_ONLY} -eq 1 ]; then
+            echo "Rebooting in 5 seconds..."
+        
+            sleep 5
+            reboot
+        fi
+
+    fi
+
+else
+
+    msg "${_MSG}ERROR:" E
+    msg "  dd returned ${_RES}" E
+
+    _RES=${EINK_ERR_UNRECOVERABLE}
+
+fi
+
+exit ${_RES}

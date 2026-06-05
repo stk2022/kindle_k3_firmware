@@ -1,0 +1,494 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   certification.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   05/22/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Mario platform Run Modes HAL layer for certification test support.  This file
+#   defines various HAL routines to put the device into various run modes.
+#
+#   This file contains a HAL for the Mario platform, which includes:
+#
+#   Constants
+#       CERT_EINK_WAN_PAGE_FLIP_DELAY    - Seconds to delay between page flips
+#                                       for wan/eink run mode
+#       CERT_EINK_USB_PAGE_FLIP_DELAY    - Seconds to delay between page flips
+#                                       for wan/usb export run mode
+#
+#   Routines
+#       display_mode_eink_usb_message() - Display usb device /eink run mode dialog
+#       wait_cancel_wan_enabled_message - Display wan run mode dialog, wait response
+#       do_run_mode_eink_usb()          - Put device into usb device / eink run mode
+#       do_run_mode_eink()              - Start page flip test
+#       do_run_mode_wan_enabled()       - Put device in wan-enabled run mode
+#       do_run_mode_eink_wan()          - Put device in wan enabled eink run mode
+#       do_run_mode_usb_wan()           - Put device in wan enabled usb export run mode
+#       do_run_mode_speaker_wan()       - Put devive into wan enabled, audio with
+#                                         speaker volume at max run mode
+#       do_run_mode_hp_wan()            - Put devive into wan enabled, audio playing w/
+#                                         speaker off and max headphone volume run mode
+#       cert_hal_init()                 - Hal initialization
+#       cert_hal_exit()                 - Hal teardown
+#
+######################################################################
+
+# USB Hal Function...
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+# Video Hal Functions...
+[ -f ${_VIDEO_HAL_FUNCTIONS} ] && . ${_VIDEO_HAL_FUNCTIONS}
+
+# WAN Hal Functions...
+[ -f ${_WAN_HAL_FUNCTIONS} ] && . ${_WAN_HAL_FUNCTIONS}
+
+#
+# mSecond Delay between page turns for EINK w/ WAN cert test
+#
+CERT_EINK_WAN_PAGE_FLIP_DELAY=5
+CERT_EINK_USB_PAGE_FLIP_DELAY=3
+CERT_EINK_PAGE_FLIP_DELAY=3
+
+export RUN_MODE_PAGE_FLIP_SAM_MENU_ITEM=500
+export RUN_MODE_PAGE_FLIP__20_MENU_ITEM=501
+export RUN_MODE_PAGE_FLIP__40_MENU_ITEM=502
+export RUN_MODE_PAGE_FLIP__60_MENU_ITEM=503
+export RUN_MODE_PAGE_FLIP__80_MENU_ITEM=504
+export RUN_MODE_PAGE_FLIP_100_MENU_ITEM=505
+                                                                 
+
+######################################################################
+# Function:     display_mode_eink_usb_message
+# Purpose:      Display screen informing operator how the EINK w/ USB
+#               run mode test works.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Waits for operator to acknowledge before returning
+######################################################################
+display_mode_eink_usb_message()
+{
+    clear_screen
+    ${DOUT} -n 14 4 "EINK with USB Run Mode"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 2 10 "This mode will export internal flash as a USB"
+    ${DOUT} -n 2 11 "mass storage device so that content can be"
+    ${DOUT} -n 2 12 "copied to and from the device from an external"
+    ${DOUT} -n 2 13 "PC.  At the same time, it will keep the video"
+    ${DOUT} -n 2 14 "active by displaying screen shots."
+    ${DOUT} 2 18 "Press the $SUCCESS_KEY_LABEL key to begin the test."
+
+    # Wait for the key before continuing...
+    wait_for_key $SUCCESS_KEY
+}
+
+
+######################################################################
+# Function:     wait_cancel_wan_enabled_message
+# Purpose:      Display the "Press x to exit from run mode" screen.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Waits for operator to acknowledge before returning
+######################################################################
+wait_cancel_wan_enabled_message()
+{
+    clear_screen
+    ${DOUT} -n 11 4 "WAN Enabled Run Mode"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 8 7 "The device is now in an active"
+    ${DOUT} -n 8 8 "run mode with the WAN module enabled."
+    ${DOUT} 8 12 "Press the $EXIT_KEY_LABEL key to exit the test."
+
+    # Wait for the key before continuing...
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:    do_run_mode_eink_usb
+# Purpose:     Exercise EINK and USB by exporting a device volume via 
+#               USB so that data can be copied to/from the device from 
+#               remote PC, and then start the page flip test.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_eink_usb()
+{
+    # Display test usage
+    display_mode_eink_usb_message
+
+    # Export the USB volume
+    do_export_usb_volumes "EINK with USB Run Mode"
+
+    # Start page flipping until user stops...
+    page_flip $CERT_EINK_USB_PAGE_FLIP_DELAY "EINK with USB Run Mode"
+
+    # Un-export the USB volume
+    vmsg "Unexporting USB volumes..."
+    un_export_usb_volumes
+}
+
+
+
+######################################################################
+# Function:    do_run_mode_eink
+# Purpose:     Exercise EINK by running the page flip test with audio.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_eink()
+{
+    # Enable the speakers, start playing a sound at max volume
+    audio_start_sound $CHANNEL_SPEAKER_STEREO $MAX_VOLUME
+
+    # Start page flipping until user stops...
+    page_flip $CERT_EINK_PAGE_FLIP_DELAY "EINK Page Flip Run Mode"
+
+    # Shut the audio off - must be pretty annoying at this point
+    audio_stop_sound
+    disable_headphones
+}
+
+######################################################################
+# Function:    do_run_mode_eink_flip_page
+# Purpose:     Exercise EINK by running the page flip test.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_eink_flip_page()
+{
+
+    do_get_user_page_flip_delay
+    USER_DEFINED_PAGE_FLIP_DELAY="$?"
+    echo "Got page flip time of $USER_DEFINED_PAGE_FLIP_DELAY"
+
+    # Start page flipping until user stops...
+    page_flip $USER_DEFINED_PAGE_FLIP_DELAY "EINK flip page only Run Mode"
+                          
+
+}
+
+                   
+
+
+######################################################################
+# Function:    do_run_mode_wan_enabled
+# Purpose:     Enables the WAN in an active run mode.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_wan_enabled()
+{
+    # Turn on the WAN device
+    vmsg "Turning ON WAN power..."
+    wan_power $WAN_POWER_ON 1
+
+    # Wait for the user to cancel the test
+    wait_cancel_wan_enabled_message
+
+    # Turn off the WAN device
+    vmsg "Turning OFF WAN power..."
+    wan_power $WAN_POWER_OFF 1
+}
+
+                   
+######################################################################
+# Function:    init_user_page_flip_delay_menu_item
+# Purpose:     Prepare for the page flip menu item
+# Paramters:   none
+# Returns:     none
+# Side Effect: none
+######################################################################
+init_user_page_flip_delay_menu_item()
+{
+    ACTIVE_MENU_ITEMS=0
+    let ACTIVE_MENU_ITEMS+=1 
+    item=`sh_array "$MENU_ITEM_LIST" $ACTIVE_MENU_ITEMS` 
+    export RUN_MODE_PAGE_FLIP_SAM_MENU_ITEM="$item"
+    let ACTIVE_MENU_ITEMS+=1 
+    item=`sh_array "$MENU_ITEM_LIST" $ACTIVE_MENU_ITEMS` 
+    export RUN_MODE_PAGE_FLIP__20_MENU_ITEM="$item"
+    let ACTIVE_MENU_ITEMS+=1 
+    item=`sh_array "$MENU_ITEM_LIST" $ACTIVE_MENU_ITEMS` 
+    export RUN_MODE_PAGE_FLIP__40_MENU_ITEM="$item"
+    let ACTIVE_MENU_ITEMS+=1 
+    item=`sh_array "$MENU_ITEM_LIST" $ACTIVE_MENU_ITEMS` 
+    export RUN_MODE_PAGE_FLIP__60_MENU_ITEM="$item"
+    let ACTIVE_MENU_ITEMS+=1 
+    item=`sh_array "$MENU_ITEM_LIST" $ACTIVE_MENU_ITEMS` 
+    export RUN_MODE_PAGE_FLIP__80_MENU_ITEM="$item"
+    let ACTIVE_MENU_ITEMS+=1 
+    item=`sh_array "$MENU_ITEM_LIST" $ACTIVE_MENU_ITEMS` 
+    export RUN_MODE_PAGE_FLIP_100_MENU_ITEM="$item"
+}                      
+######################################################################
+# Function:    display_user_page_flip_delay_menu_item
+# Purpose:     Display the page flip menu item
+# Paramters:   none
+# Returns:     none
+# Side Effect: none
+######################################################################
+display_user_page_flip_delay_menu_item()
+{
+    # Print Banner
+    clear_screen
+    let line_number=9
+    print_center_text "Page Flip Timing" "~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 12 4
+    ${DOUT} -n 2 $line_number "Enter new page flip time in seconds:"
+    let line_number+=2
+    text=`keycode_to_label $RUN_MODE_PAGE_FLIP_SAM_MENU_ITEM` 
+    ${DOUT} -n 2 $line_number "$text) Same speed"  
+    let line_number+=2
+    text=`keycode_to_label $RUN_MODE_PAGE_FLIP__20_MENU_ITEM` 
+    ${DOUT} -n 2 $line_number "$text) For  20 seconds"  
+    let line_number+=2
+    text=`keycode_to_label $RUN_MODE_PAGE_FLIP__40_MENU_ITEM` 
+    ${DOUT} -n 2 $line_number "$text) For  40 seconds"  
+    let line_number+=2
+    text=`keycode_to_label $RUN_MODE_PAGE_FLIP__60_MENU_ITEM` 
+    ${DOUT} -n 2 $line_number "$text) For  60 seconds"  
+    let line_number+=2
+    text=`keycode_to_label $RUN_MODE_PAGE_FLIP__80_MENU_ITEM` 
+    ${DOUT} -n 2 $line_number "$text) For  80 seconds"  
+    let line_number+=2
+    text=`keycode_to_label $RUN_MODE_PAGE_FLIP_100_MENU_ITEM` 
+    ${DOUT} -n 2 $line_number "$text) For 100 seconds"  
+    
+    ${DOUT} 2 $line_number "Press $EXIT_KEY_LABEL to cancel."
+}
+######################################################################
+# Function:    do_get_user_page_flip_delay
+# Purpose:     Get the user page flip delay
+#              Since Shasta does not have numeric key, uses the 
+#              keypad to select predefined timeout.
+# Paramters:   none
+# Returns:     none
+# Side Effect: none
+######################################################################
+do_get_user_page_flip_delay()
+{
+    # Dump any remaining CR
+    dump_char
+
+    # Get input from user
+    _USER_PAGE_FLIP_TIME=0
+    init_user_page_flip_delay_menu_item
+    display_user_page_flip_delay_menu_item
+    while [ $_USER_PAGE_FLIP_TIME -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            case "$KEY" in 
+                $RUN_MODE_PAGE_FLIP_SAM_MENU_ITEM) 
+                    return $CERT_EINK_WAN_PAGE_FLIP_DELAY 
+                    ;;
+                $RUN_MODE_PAGE_FLIP__20_MENU_ITEM) 
+                    _USER_PAGE_FLIP_TIME=20  
+                    ;;
+                $RUN_MODE_PAGE_FLIP__40_MENU_ITEM) 
+                    _USER_PAGE_FLIP_TIME=40  
+                    ;;
+                $RUN_MODE_PAGE_FLIP__60_MENU_ITEM) 
+                    _USER_PAGE_FLIP_TIME=60  
+                    ;;
+                $RUN_MODE_PAGE_FLIP__80_MENU_ITEM) 
+                    _USER_PAGE_FLIP_TIME=80  
+                    ;;
+                $RUN_MODE_PAGE_FLIP_100_MENU_ITEM) 
+                    _USER_PAGE_FLIP_TIME=100 
+                    ;;
+                                                                                   
+                $EXIT_KEY)
+                    echo "Not setting run-in execution time - user cancelled."
+                    return $CERT_EINK_WAN_PAGE_FLIP_DELAY 
+                    ;;
+            *)
+                ;;
+            esac
+        fi
+    done
+    return $_USER_PAGE_FLIP_TIME
+}
+######################################################################
+# Function:    do_run_mode_eink_wan
+# Purpose:     Exercise EINK while WAN is enabled by enabling WAN and
+#               then displaying images to the display.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_eink_wan()
+{
+    # Place holder just in case it needs to get the 
+    # time to do the page flip, as in NellSL
+    # do_get_user_page_flip_delay
+    # USER_DEFINED_PAGE_FLIP_DELAY="$?"
+    USER_DEFINED_PAGE_FLIP_DELAY=$CERT_EINK_WAN_PAGE_FLIP_DELAY 
+    echo "Got page flip time of $USER_DEFINED_PAGE_FLIP_DELAY"
+    # Turn on the WAN device
+    vmsg "Turning ON WAN power..."
+    wan_power $WAN_POWER_ON 1
+
+    # Start page flipping until user stops...
+    page_flip $USER_DEFINED_PAGE_FLIP_DELAY "EINK with WAN Run Mode"
+
+    # Turn off the WAN device
+    vmsg "Turning OFF WAN power..."
+    wan_power $WAN_POWER_OFF 1
+}
+
+
+######################################################################
+# Function:    do_run_mode_usb_wan
+# Purpose:     Exercise USB while WAN is enabled by enabling WAN and
+#               then exporting a device volume via USB so that data
+#               can be copied to/from the device from remote PC.
+# Paramters:   none
+# Returns:     none
+# Assumptions: none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_usb_wan()
+{
+    # Turn on the WAN device
+    vmsg "Turning ON WAN power..."
+    wan_power $WAN_POWER_ON 1
+
+    # Export the USB volume
+    do_export_usb_volumes "USB with WAN Enabled Run Mode"
+
+    # Display the "Running test, press X to cancel" message...
+    # Wait for exit key before continuing...
+    clear_screen
+    ${DOUT} -n 9 4 "USB with WAN Enabled Run Mode"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 4 7 "The device volume has been exported as a"
+    ${DOUT} -n 4 8 "mass storage device over USB.  To create"
+    ${DOUT} -n 4 9 "extra USB activity, mount the drive on the"
+    ${DOUT} -n 4 10 "remote PC and copy files to and from the"
+    ${DOUT} -n 4 11 "mounted volume."
+    ${DOUT} 4 14 "Press $EXIT_KEY_LABEL to stop test..."
+    wait_for_key $EXIT_KEY
+
+    # Un-export the USB volume
+    vmsg "Unexporting USB volumes..."
+    un_export_usb_volumes
+
+    # Turn off the WAN device
+    vmsg "Turning OFF WAN power..."
+    wan_power $WAN_POWER_OFF 1
+}
+
+
+######################################################################
+# Function:    do_run_mode_speaker_wan
+# Purpose:     Drive the audio speakers while WAN is enabled by 
+#               enabling WAN, setting volume to maximum, and then playing
+#               sound.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_speaker_wan()
+{
+    # Turn on the WAN device
+    vmsg "Turning ON WAN power..."
+    wan_power $WAN_POWER_ON 1
+
+    # Enable the speakers, start playing a sound at max volume
+    audio_start_sound $CHANNEL_SPEAKER_STEREO $MAX_VOLUME
+
+    clear_screen
+    ${DOUT} -n 9 4 "Speakers with WAN Enabled Run Mode"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 4 7 "WAN is powered on and audio playing through"
+    ${DOUT} -n 4 9 "speakers at max volume."
+    ${DOUT} 5 12 "Press $EXIT_KEY_LABEL to return to run mode menu..."
+    wait_for_key $EXIT_KEY
+
+    # Shut the audio off - must be pretty annoying at this point
+    audio_stop_sound
+    disable_speakers
+
+    # Turn off the WAN device
+    vmsg "Turning OFF WAN power..."
+    wan_power $WAN_POWER_OFF 1
+}
+
+
+######################################################################
+# Function:    do_run_mode_hp_wan
+# Purpose:     Drive the headphone jack while WAN is enabled by enabling 
+#               WAN, setting volume to maximum, disabling the speakers, 
+#               and then playing sound.
+# Paramters:   none
+# Returns:     none
+# Side Effect: SUB_TEST_PASSED is cleared on any failures
+######################################################################
+do_run_mode_hp_wan()
+{
+    # Turn on the WAN device
+    vmsg "Turning ON WAN power..."
+    wan_power $WAN_POWER_ON 1
+
+    # Disable the speakers, enable the headphones, start playing a sound at max volume
+    audio_start_sound $CHANNEL_HP_STEREO $MAX_VOLUME
+
+    clear_screen
+    ${DOUT} -n 6 4 "Audio Jack with WAN Enabled Run Mode"
+    ${DOUT} -n 5 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 4 7 "WAN is powered on and audio playing through"
+    ${DOUT} -n 4 9 "headphones at max volume."
+    ${DOUT} 5 12 "Press $EXIT_KEY_LABEL to return to run mode menu..."
+    wait_for_key $EXIT_KEY
+
+    # Shut the audio off - must be pretty annoying at this point
+    audio_stop_sound
+    disable_headphones
+
+    # Turn off the WAN device
+    vmsg "Turning OFF WAN power..."
+    wan_power $WAN_POWER_OFF 1
+}
+
+
+######################################################################
+# Function:     cert_hal_init
+# Purpose:      Hal initialization routine for certification tests.  
+#               It currently calls the hal init routines for audio, usb, wan, and
+#               video.
+# Paramters:    none
+# Returns:      none
+######################################################################
+cert_hal_init()
+{
+    #
+    # Initialize utility hals
+    #
+    vmsg "cert_hal_init()"
+}
+
+
+######################################################################
+# Function:     cert_hal_exit
+# Purpose:      Hal exit routine for run mode.  It currently
+#               calls the hal exit routines for audio, usb, wan, and
+#               video.
+# Paramters:    none
+# Returns:      none
+######################################################################
+cert_hal_exit()
+{
+    #
+    # Clean up utility hals
+    #
+    vmsg "cert_hal_exit()"
+}

@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+/sys/devices/platform/mxc_rtc.0/wakeup_enable

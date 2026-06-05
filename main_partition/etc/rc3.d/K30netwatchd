@@ -1,0 +1,33 @@
+#!/bin/sh
+NAME="Netwatch Daemon"
+DAEMON=/usr/sbin/netwatchd
+PIDFILE=/var/run/`basename $DAEMON`.pid
+CONF_NAME=netwatchd
+PMOND_START="lipc-set-prop com.lab126.pmond start"
+PMOND_STOP="lipc-set-prop com.lab126.pmond stop"
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+case "$1" in
+	start)
+		if [ -x "$DAEMON" ]; then
+			msg "starting $NAME" I
+			$PMOND_START $CONF_NAME
+		fi
+		;;
+
+	stop)
+		if [ -r "$PIDFILE" ]; then
+			msg "stopping $NAME" I
+			$PMOND_STOP $CONF_NAME
+		fi
+		;;
+	*)
+		msg "Usage: /etc/init.d/$NAME {start|stop}" W >&2
+		exit 1
+		;;
+esac
+
+exit 0
+

@@ -1,0 +1,60 @@
+#!/bin/sh
+
+# dumps native thread stacks for a process.
+
+# for msg()
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+print_usage () {
+    echo "usage: $0 <pid>"
+    echo "-h|--help print this help"
+    echo ""
+    echo "Attempts to send native stack traces for a process to the log."
+}
+
+if [ "x$1" = "x--help" -o "x$1" = "x-h" -o -z "$1" ]; then
+	print_usage
+	exit 0
+fi
+
+
+#-- main ---------------------------------------------------------
+PROCESS_PID=$1
+PROCESS_EXE=$(readlink /proc/${PROCESS_PID}/exe)
+PROCESS=$(basename ${PROCESS_EXE})
+LOGGER() { logger -p local4.info -t "system: I dumpstack:${PROCESS}:pid=${PROCESS_PID}"; }
+GDB=/usr/bin/gdb
+
+if [ -z "${PROCESS_EXE}" -o -z "${PROCESS}" ]; then
+    msg "pid=$1:Could not find process" E dumpstack
+    exit 1
+fi
+
+
+if [ -x ${GDB} ]; then
+    # kill gdb if it doesn't finish in 20s, and send SIGCONT to the process
+    (
+        sleep 20;
+        GDB_PIDS=$(ps --ppid $$ | grep gdb | awk '{ print $1 }');
+        if [ -n "${GDB_PIDS}" ]; then
+            kill -KILL ${GDB_PIDS} 2>/dev/null >/dev/null
+            kill -CONT ${PROCESS_PID}
+        fi
+    ) &
+
+    msg "${PROCESS}:pid=${PROCESS_PID}:begin native threads ==============================" I dumpstack
+    ${GDB} --quiet \
+           --se "${PROCESS_EXE}" \
+           --pid ${PROCESS_PID} \
+           --batch \
+           -ex "t a a bt" \
+           -ex detach \
+        | LOGGER
+    msg "${PROCESS}:pid=${PROCESS_PID}:end native threads ================================" I dumpstack
+else
+    msg "${PROCESS}:pid=${PROCESS_PID}:no gdb; skipping native threads" I dumpstack
+fi
+
+# rotate log files -- in case someone does a 15s hold right after this.
+/usr/sbin/tinyrot --force

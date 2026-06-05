@@ -1,0 +1,9 @@
+# /etc/ppp/options
+#
+# default common options for peers
+
+/dev/tts/USB0 230400
+crtscts
+modem
+lock
+novj

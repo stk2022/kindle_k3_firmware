@@ -1,0 +1,35 @@
+#!/bin/sh
+NAME="WAN daemon"
+DAEMON=/usr/sbin/wand
+PIDFILE=/var/run/`basename $DAEMON`.pid
+CONF_NAME=wand
+PMOND_START="lipc-set-prop com.lab126.pmond start "
+PMOND_STOP="lipc-set-prop com.lab126.pmond stop"
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+_FEATURES=/etc/rc.d/features
+[ -f ${_FEATURES} ] && . ${_FEATURES}
+
+case "$1" in
+
+   start)
+		if [ -x "$DAEMON" -a ! -f /mnt/us/WANOFF ] && has_WAN; then
+			msg "starting $NAME" I
+            $PMOND_START $CONF_NAME
+		fi
+		;;
+
+   stop)
+		if [ -r "$PIDFILE" ]; then
+			msg "stopping $NAME" I
+            $PMOND_STOP $CONF_NAME
+		fi
+		;;
+	*)
+		msg "Usage: /etc/init.d/$NAME {start|stop}" W >&2
+		exit 1
+		;;
+esac
+
+exit 0
+

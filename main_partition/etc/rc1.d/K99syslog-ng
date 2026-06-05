@@ -1,0 +1,61 @@
+#! /bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+syslog_ng=/usr/sbin/syslog-ng
+test -x "$syslog_ng" || exit 0
+
+start_syslog()
+{
+	msg "starting syslog-ng" I
+	# If that turns out to be needed, that would be where one jungle with symlinks 
+	# to set /etc/syslog-ng/syslog-ng.conf to point to on or the other 
+	# syslog-ng.conf.<LEVEL> files that are yet to be created which would swallow
+	# out any debug messages for syslog-ng.conf-debug, debug and info messages 
+	# for syslog-ng.conf.info so on. Note that in order to do that, mntroot_rw 
+	# should be invoked
+	if [ -e $MSG_CUR_LVL ]; then
+		curLvl=`cat $MSG_CUR_LVL`
+	else
+		msg_setlevel I
+	fi
+    $STARTSTOPD -S -q -x $syslog_ng
+	
+}
+
+stop_syslog()
+{
+    msg "stopping syslog-ng" I
+    $STARTSTOPD -K -q -p /var/run/syslog-ng.pid
+}
+
+case "$1" in
+  start)
+	start_syslog
+	exit 0
+    ;;
+  stop)
+	stop_syslog
+	exit 0
+    ;;
+  reload|force-reload)
+    $STARTSTOPD -K -q -s 1 -x $syslog_ng
+    ;;
+  restart)
+ 	stop_syslog
+    msg "waiting for syslog-ng to die off" I
+    for i in 1 2 3 ;
+    do
+        sleep 1
+        msg "waited 1 second" I
+    done
+	start_syslog
+	exit 0
+    ;;
+  *)
+    msg "usage: /etc/init.d/syslog-ng {start|stop|reload|restart|force-reload}" W
+    exit 1
+esac
+
+exit 0

@@ -1,0 +1,34 @@
+#!/bin/sh
+
+#This increases the priority of IRQ-7 (Disk interrupts) to 90
+#This is done to increase boot performance on Shasta
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_IRQ7="`ps -ef | grep '\[IRQ-7\]' | awk '{print $2}'`"
+_NEW_PRIORITY=90
+
+chpriority()
+{
+if test "$_IRQ7" = ""
+then
+  msg "Cannot set priority for IRQ-7" W 
+else
+  chrt -fp ${_NEW_PRIORITY} ${_IRQ7}
+  msg "Changed priority for IRQ-7" I
+fi
+}
+
+case "$1" in
+	start|restart)
+		chpriority
+		;;
+
+	*)
+		msg "Usage: $0 start" W
+		exit 1 
+		;; 
+esac
+
+exit 0

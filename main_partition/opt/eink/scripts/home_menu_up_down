@@ -1,0 +1,129 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EINK_SYSFS=/sys/devices/platform/eink_fb.0
+_EINK_IOCTL_TIMES=${_EINK_SYSFS}/ioctl_time
+_EINK_IOCTL_TIME1=
+_EINK_IOCTL_TIME2=
+
+fiveway_down()
+{
+	if [ -f ${FIVEWAY} ]; then
+		if ( is_Luigi_Platform ); then
+			down_key=108
+		else
+			down_key=123
+		fi
+		
+		echo "send $down_key" >${FIVEWAY}
+	fi
+}
+
+fiveway_up()
+{
+	if [ -f ${FIVEWAY} ]; then
+		if ( is_Luigi_Platform ); then
+			up_key=103
+		else
+			up_key=122
+		fi
+		
+		echo "send $up_key" >${FIVEWAY}
+	fi
+}
+
+keypad_home()
+{
+	if [ -f ${KEYPAD} ]; then
+		if ( is_Luigi_Platform ); then
+			home_key=102
+		else
+			home_key=98
+		fi
+		
+		echo "send $home_key" >${KEYPAD}
+	fi
+}
+
+keypad_menu()
+{
+	if [ -f ${KEYPAD} ]; then
+		menu_key=139
+		echo "send $menu_key" >${KEYPAD}
+	fi
+}
+
+get_ioctl_times()
+{
+    _EINK_IOCTL_TIME1=`awk '{ print $1 }' ${_EINK_IOCTL_TIMES}`
+    _EINK_IOCTL_TIME2=`awk '{ print $2 }' ${_EINK_IOCTL_TIMES}`
+}
+
+do_fiveway_operation()
+{
+    case $1 in
+        down)
+            fiveway_down
+        ;;
+        
+        up)
+            fiveway_up
+        ;;
+    esac
+
+    sleep 3
+    
+    get_ioctl_times
+    let ioctl_time+=${_EINK_IOCTL_TIME1}
+    let ioctl_time+=${_EINK_IOCTL_TIME2}
+    let count+=2
+}
+
+# Set things up and loop forever.
+#
+let max_avg_time=0
+let cur_avg_time=0
+
+while [ true ]; do
+
+    let ioctl_time=0
+    let count=0
+    
+    # Get us back to Home.
+    #
+    keypad_home
+    sleep 5
+    
+    # Pop the menu up.
+    #
+    keypad_menu
+    sleep 2
+    
+    # Fiveway down 3 times and then fiveway back up 3 times.
+    #
+    do_fiveway_operation down
+    do_fiveway_operation down
+    do_fiveway_operation down
+    
+    do_fiveway_operation up
+    do_fiveway_operation up
+    do_fiveway_operation up
+
+    # Dismiss the menu.
+    #
+    keypad_menu
+
+    # Print out latest statistics.
+    #
+    let cur_avg_time=$(( $ioctl_time/$count ))
+    
+    if [ $cur_avg_time -gt $max_avg_time ]; then
+        max_avg_time=$cur_avg_time
+    fi
+    
+    echo "cur avg fiveway time = ${cur_avg_time}ms"
+    echo "max avg fiveway time = ${max_avg_time}ms"
+
+done

@@ -1,0 +1,4 @@
+#!/bin/sh
+
+( echo "com.lab126.hal" && lipc-probe -l ) | grep -v org.freedesktop.DBus | lipc-wait-event -mtl "*"
+

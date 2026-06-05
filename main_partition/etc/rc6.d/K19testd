@@ -1,0 +1,78 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+TESTD=/test/bin/testd
+TESTD_PID=/var/run/testd.pid
+CLIENT_CONF=/mnt/us/system/test_client.conf
+PREVENT_START_FLAG=/mnt/us/DO_NOT_START_TESTD
+
+[ ! -x $TESTD ] && exit 1
+
+status_testd()
+{
+	if [ -e $TESTD_PID ] ; then
+		PID=`cat $TESTD_PID`
+		msg "testd is running with PID $PID" I
+		return 0
+	else
+		msg "testd is not running" I
+	fi
+	
+	return 1
+}
+
+start_testd()
+{
+	status_testd
+	if [ $? != 0 ] ; then
+		if [ -e $PREVENT_START_FLAG ] ; then
+			msg "$PREVENT_START_FLAG detected, testd disabled" I
+		else
+			msg "starting testd test server" I
+			$TESTD
+		fi
+	fi
+}
+
+stop_testd()
+{
+	status_testd
+	if [ $? == 0 ] ; then
+		msg "killing testd test server" I
+		PID=`cat $TESTD_PID`
+		kill -INT $PID 2>&1
+		rm -f $TESTD_PID
+		[ -e $CLIENT_CONF ] && rm -f $CLIENT_CONF
+	fi
+}
+
+case "$1" in
+
+    start)
+    	start_testd
+	;;
+
+    stop)
+    	stop_testd
+	;;
+	
+    restart)
+    	stop_testd
+    	start_testd
+    	;;
+	
+    status)
+    	status_testd
+	return $?
+    	;;
+
+    *)
+	msg "Usage: $0 start" W
+	exit 1
+	;;
+esac
+
+exit 0
+

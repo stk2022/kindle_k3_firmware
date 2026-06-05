@@ -1,0 +1,17 @@
+#!/bin/sh
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+case "$1" in
+	start|stop)
+		cat /proc/uptime | sed 's/ .*/000/ ; s/\.\(...\).*/\1/' > /var/tmp/sdtime_start
+		;;
+	restart|reload|force-reload)
+		msg "argument '$1' not supported" W
+		exit 3
+		;;
+	*)
+		msg "Usage: $0 {start|stop}" W
+		exit 1
+		;;
+esac

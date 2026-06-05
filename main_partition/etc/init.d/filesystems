@@ -1,0 +1,154 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_PATHS=/etc/sysconfig/paths
+[ -f ${_PATHS} ] && . ${_PATHS}
+
+_RESTORE_RO=0
+
+_MNTROOT_RW()
+{
+	mntroot_rw
+	_RESTORE_RO=1
+}
+
+_MNTROOT_RO()
+{
+	if [ ${_RESTORE_RO} -ne 0 ]; then
+		mntroot_ro
+	fi
+}
+
+mount_var_local()
+{
+	# try to mount the volume
+	mount -t ext3 -o ${MNTLOG_MNT_OPT} ${MNTLOG_DEV} ${MNTLOG_MP}
+	_RES=$?
+	# check success of the mount
+	if [ ${_RES} -ne 0 ]; then
+		mkfs.ext3 -F -L ${MNTLOG_LABEL} ${MNTLOG_DEV}
+		tune2fs -c 0 -i 0 ${MNTLOG_DEV}
+		mkdir -p /tmp$MNTLOG_MP
+		cp -arf ${MNTLOG_DC}/* /tmp${MNTLOG_MP}/.
+		rm -rf ${MNTLOG_MP}/*
+		mount -o ${MNTLOG_MNT_OPT} ${MNTLOG_DEV} ${MNTLOG_MP}
+		cp -arf /tmp${MNTLOG_MP}/* ${MNTLOG_MP}/.
+		rm -rf /tmp${MNTLOG_MP}
+		rm -rf ${MNTLOG_MP}/lost+found
+	fi
+}
+
+mount_var_tmp()
+{
+	if [ ! -L /tmp ] ; then
+		_MNTROOT_RW
+		ln -sf /var/tmp /tmp
+	fi
+}
+
+mount_var()
+{
+	mount -t tmpfs rwfs /mnt/rwfs -o size=32M
+	
+	RAMDIRS="var"
+	for DIR in ${RAMDIRS}; do
+		if [ ! -e /mnt/rwfs/${DIR} ]; then
+			cp -a -f /${DIR} /mnt/rwfs/${DIR}
+			mount -o bind /mnt/rwfs/${DIR} /${DIR}
+		fi
+	done
+	
+	VARDIR="cache lib lock log run tmp local local/log local/system local/java"
+	for DIR in ${VARDIR}; do
+		if [ ! -d /var/${DIR} ]; then
+			mkdir -p /var/${DIR}
+		fi
+	done
+
+		# init DNS resolver configuration
+		cp /etc/resolv.d/resolv.conf.default `readlink /etc/resolv.conf`
+
+	mount_var_tmp
+	mount_var_local
+	wait 
+}
+
+mount_shm()
+{
+	mount -t tmpfs shm /dev/shm
+}
+
+link_mtab()
+{
+	if [ ! -e /etc/mtab ]; then
+		_MNTROOT_RW
+		ln -s /proc/mounts /etc/mtab
+	fi
+}
+
+touchdate()
+{
+	VARDIR="proc dev dev/pts tmp sys"
+	for DIR in ${VARDIR}; do
+		if [ -d /${DIR} ]; then
+			touch /${DIR}
+		fi
+	done
+}
+
+clean_lost_found()
+{
+	if [ -d /lost+found ] ; then
+		_MNTROOT_RW		
+		rm -rf /lost+found
+	fi 
+}
+
+start_it_up()
+{
+	msg "mounting filesystems" I
+
+	# when necessary, these will mntroot_rw and will flag that they needed to do so
+	clean_lost_found
+
+	mount_var &
+	mount_shm &
+	link_mtab &
+
+	# wait for all the above to finish
+	wait
+
+	# /tmp needs to wait for mount_var to complete; restore ro if necessary
+	touchdate
+	_MNTROOT_RO
+}
+
+shut_it_down()
+{
+	msg "unmounting filesystems" I
+	mntroot_ro
+}
+
+case "$1" in
+	start)
+		start_it_up
+		;;		
+	stop)
+		shut_it_down
+		;;
+	restart|force-reload)
+		shut_it_down
+		sleep 1
+		start_it_up
+		;;
+	*)
+		msg "Usage: /etc/init.d/$NAME {start|stop|restart|force-reload}" W >&2
+		exit 1
+		;;
+esac
+
+
+exit 0
+

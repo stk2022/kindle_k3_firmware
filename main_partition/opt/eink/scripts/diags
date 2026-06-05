@@ -1,0 +1,758 @@
+#!/bin/sh
+
+export PATH=/usr/sbin:${PATH}
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EIPUTS=/usr/sbin/eiputs
+[ -f ${_EIPUTS} ] && . ${_EIPUTS}
+
+_LOGO_SCREEN=5
+_RECOVERY_UTIL_SCREEN=8
+
+_TIME_EINK=/tmp/.time_eink
+
+_EINK_DEBUG=${1:-0} # 2147483649 -> 0x80000001 (full eInk debugging)
+_LOOP_DELAY=${2:-5} # default to 5 seconds between loops
+_VCOM_LOOP=${3:-0}  # 0 -> diags, non-zero VCOM
+_MAX_COUNT=${4:-0}  # 0 -> forever, non-zero is maxcount
+
+_EINK_WAVEFORM_VERSION=${EINK_PROC}/waveform_version
+_EINK_COMMANDS_VERSION=${EINK_PROC}/commands_version
+_EINK_UPDATE_DISPLAY=${EINK_PROC}/update_display
+_EINK_POWER_LEVEL=${EINK_PROC}/power_level
+_EINK_TEMPERATURE=${EINK_PROC}/temperature
+
+_EINK_SYSFS=/sys/devices/platform/eink_fb.0
+_EINK_PANEL_ID=${_EINK_SYSFS}/panel_id
+_EINK_VCOM=${_EINK_SYSFS}/vcom
+
+_EINK_LOGGING_CTRL=${_EINK_SYSFS}/logging
+_EINK_LOGGING_LEVEL=`cat ${_EINK_LOGGING_CTRL}`
+
+_WAVEFORM_EINK_VERSION=
+_COMMANDS_EINK_VERSION=
+_TEMPERATURE=
+_PANEL_ID=
+_VCOM=
+_WHAT="???"
+
+_EINK_UPDATE_DISPLAY_ORIENTATION=14
+_EINK_UPDATE_DISPLAY_WHICH=18
+_EINK_SET_CONTRAST=19
+_EINK_GRAYSCALE_TEST=101
+
+_EINK_UPDATE_DISPLAY_CLS=0
+_EINK_UPDATE_DISPLAY_PART=1
+_EINK_UPDATE_DISPLAY_FULL=2
+_EINK_UPDATE_DISPLAY_AREA=3
+_EINK_UPDATE_DISPLAY_FX=7
+
+_EINK_POWER_LEVEL_ON=0
+_EINK_POWER_LEVEL_BLANK=1
+_EINK_POWER_LEVEL_STANDBY=2
+_EINK_POWER_LEVEL_SLEEP=3
+_EINK_POWER_LEVEL_OFF=4
+
+_POWER_TIMER_DELAY=`cat ${_EINK_SYSFS}/power_timer_delay`
+_MSECS=1000
+if [ $((${_POWER_TIMER_DELAY}%${_MSECS})) -eq 0 ]; then
+    _POWER_TIMER_DELAY=$((${_POWER_TIMER_DELAY}/${_MSECS}))
+else
+    _POWER_TIMER_DELAY=$((${_POWER_TIMER_DELAY}/${_MSECS} + 1))
+fi
+
+_FX_UPDATE_PART=0
+_FX_UPDATE_FULL=1
+_FX_UPDATE_FAST=2
+_FX_UPDATE_SLOW=3
+
+_FX_AREA_UPDATE_FLASH=20
+_FX_AREA_UPDATE_INVERT=21
+
+_FX_BUFFER_LOAD=99
+_FX_DISPLAY_PART=100
+_FX_DISPLAY_FULL=101
+
+_ORIENT_PORTRAIT=0
+_ORIENT_PORTRAIT_UPSIDE_DOWN=1
+_ORIENT_LANDSCAPE=2
+_ORIENT_LANDSCAPE_UPSIDE_DOWN=3
+
+_CONTRAST_OFF=0
+_CONTRAST_LIGHT=1
+_CONTRAST_MEDIUM=2
+_CONTRAST_DARK=3
+
+_1BPP_GRAYS="0 255"
+_2BPP_GRAYS="0 85 170 255"
+_4BPP_GRAYS="0 17 34 51 68 85 102 119 136 153 170 187 204 221 238 255"
+
+_TIME_UPDATE_PART=
+_TIME_UPDATE_FULL=
+_RND=
+
+get_eink_waveform_version()
+{
+    if [ -f ${_EINK_WAVEFORM_VERSION} ]; then
+        _WAVEFORM_EINK_VERSION="`cat ${_EINK_WAVEFORM_VERSION}`"
+    else
+        _WAVEFORM_EINK_VERSION="${_WHAT}"
+    fi
+}
+
+get_eink_commands_version()
+{
+    if [ -f ${_EINK_COMMANDS_VERSION} ]; then
+        _COMMANDS_EINK_VERSION="`cat ${_EINK_COMMANDS_VERSION}`"
+    else
+        _COMMANDS_EINK_VERSION="${_WHAT}"
+    fi
+}
+
+get_eink_temperature()
+{
+    if [ -f ${_EINK_TEMPERATURE} ]; then
+        _TEMPERATURE="`cat ${_EINK_TEMPERATURE}`"
+    else
+        _TEMPERATURE="${_WHAT}"
+    fi
+}
+
+get_eink_panel_id()
+{
+    if [ -f ${_EINK_PANEL_ID} ]; then
+        _PANEL_ID="`cat ${_EINK_PANEL_ID}`"
+    else
+        _PANEL_ID="${_WHAT}"
+    fi
+}
+
+get_eink_vcom()
+{
+    if [ -f ${_EINK_VCOM} ]; then
+        _VCOM="`cat ${_EINK_VCOM}`"
+    else
+        _VCOM="${_WHAT}"
+    fi
+}
+
+get_rnd()
+{
+    # Assume max >= min to determine range.
+    #
+    min=$1
+    max=$2
+    let rng=$(($max - $min))
+
+    # Get a 32-bit (4-byte) random hex value from /dev/urandom, convert it to decimal,
+    # and put it in the right range for return.
+    #
+    let rnd_hex=0x`cat /dev/urandom | hexdump -n 4 | awk '/0000000/ { print $2 $3 $4 $5 }'`
+    rnd=`echo $rnd_hex`
+    let rnd=$(($rnd % $rng))
+    let rnd=$(($min + $rnd))
+    
+    _RND=$rnd
+}
+
+get_indexed_gray()
+{
+    # Normalize the input to 0..255.
+    #
+    let gray=$1%256
+    
+    # Determine the number of grays.
+    #
+    case ${SCREEN_DEPTH} in
+    
+        1)
+            grays=${_1BPP_GRAYS}
+            num_grays=2
+        ;;
+        
+        2)
+            grays=${_2BPP_GRAYS}
+            num_grays=4
+        ;;
+        
+        # For eInk, 8bpp still only has 16 grays.
+        #
+        4 | 8)
+            grays=${_4BPP_GRAYS}
+            num_grays=16
+        ;;
+        
+        *)
+            num_grays=256
+        ;;
+        
+    esac
+    
+    # If there aren't 256 grays, index into the appropriate gray array.
+    #
+    if [ $num_grays -ne 256 ]; then
+        let index=$gray%$num_grays
+        
+        let i=0
+        for gray in $grays; do
+            if [ $i -eq $index ]; then
+                break
+            else
+                let i+=1
+            fi
+        done
+    fi
+    
+    return $gray
+}
+
+clear_screen()
+{
+    echo ${_EINK_UPDATE_DISPLAY_CLS} >${_EINK_UPDATE_DISPLAY}
+}
+
+logo_screen()
+{
+    ${EIPS} -s ${_LOGO_SCREEN}
+}
+
+recovery_util_screen()
+{
+    ${EIPS} -s ${_RECOVERY_UTIL_SCREEN}
+}
+
+update_display_part()
+{
+    echo ${_EINK_UPDATE_DISPLAY_PART} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_full()
+{
+    echo ${_EINK_UPDATE_DISPLAY_FULL} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_fast()
+{
+    echo ${_EINK_UPDATE_DISPLAY_WHICH} ${_FX_UPDATE_FAST} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_slow()
+{
+    echo ${_EINK_UPDATE_DISPLAY_WHICH} ${_FX_UPDATE_SLOW} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_buffer_load()
+{
+    echo ${_EINK_UPDATE_DISPLAY_WHICH} ${_FX_BUFFER_LOAD} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_buffer_display_part()
+{
+    echo ${_EINK_UPDATE_DISPLAY_WHICH} ${_FX_DISPLAY_PART} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_buffer_display_full()
+{
+    echo ${_EINK_UPDATE_DISPLAY_WHICH} ${_FX_DISPLAY_FULL} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_portrait()
+{
+    echo ${_EINK_UPDATE_DISPLAY_ORIENTATION} ${_ORIENT_PORTRAIT} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_portrait_upside_down()
+{
+    echo ${_EINK_UPDATE_DISPLAY_ORIENTATION} ${_ORIENT_PORTRAIT_UPSIDE_DOWN} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_landscape()
+{
+    echo ${_EINK_UPDATE_DISPLAY_ORIENTATION} ${_ORIENT_LANDSCAPE} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_landscape_upside_down()
+{
+    echo ${_EINK_UPDATE_DISPLAY_ORIENTATION} ${_ORIENT_LANDSCAPE_UPSIDE_DOWN} >${_EINK_UPDATE_DISPLAY}
+}
+
+update_display_rotate()
+{
+    echo ${_EINK_UPDATE_DISPLAY_ORIENTATION} $1 >${_EINK_UPDATE_DISPLAY}
+    update_screen_info
+}
+
+power_level_on()
+{
+    echo ${_EINK_POWER_LEVEL_ON} >${_EINK_POWER_LEVEL}
+}
+
+power_level_blank()
+{
+    echo ${_EINK_POWER_LEVEL_BLANK} >${_EINK_POWER_LEVEL}
+}
+
+power_level_standby()
+{
+    echo ${_EINK_POWER_LEVEL_STANDBY} >${_EINK_POWER_LEVEL}
+}
+
+power_level_sleep()
+{
+    echo ${_EINK_POWER_LEVEL_SLEEP} >${_EINK_POWER_LEVEL}
+}
+
+power_level_off()
+{
+    echo ${_EINK_POWER_LEVEL_OFF} >${_EINK_POWER_LEVEL}
+}
+
+contrast_off()
+{
+    echo ${_EINK_SET_CONTRAST} ${_CONTRAST_OFF} >${_EINK_UPDATE_DISPLAY}
+}
+
+contrast_light()
+{
+    echo ${_EINK_SET_CONTRAST} ${_CONTRAST_LIGHT} >${_EINK_UPDATE_DISPLAY}
+}
+
+contrast_medium()
+{
+    echo ${_EINK_SET_CONTRAST} ${_CONTRAST_MEDIUM} >${_EINK_UPDATE_DISPLAY}
+}
+
+contrast_dark()
+{
+    echo ${_EINK_SET_CONTRAST} ${_CONTRAST_DARK} >${_EINK_UPDATE_DISPLAY}
+}
+
+time_update_display_part()
+{
+    clear_screen
+    
+    time ${EIPS} -p >${_TIME_EINK} 2>&1
+    _TIME_UPDATE_PART="`cat ${_TIME_EINK} | awk '/real/ { print $2 " " $3 }'`"
+    
+    rm ${_TIME_EINK}
+}
+
+time_update_display_full()
+{
+    clear_screen
+    
+    time ${EIPS} -f -p >${_TIME_EINK} 2>&1
+    _TIME_UPDATE_FULL="`cat ${_TIME_EINK} | awk '/real/ { print $2 " " $3 }'`"
+    
+    rm ${_TIME_EINK}
+}
+
+test_grayscale()
+{
+    echo ${_EINK_GRAYSCALE_TEST} >${_EINK_UPDATE_DISPLAY}
+}
+
+test_area_updates()
+{
+    update_type1=$1
+    update_type2=$1
+    
+    # Fill the framebuffer with an eips pattern but don't update the display with it yet.
+    #
+    ${EIPS} -n -p
+    
+    # Test fast page-turn mode by using the fast updates in combination with the slow
+    # ones.  Similarly, test the buffered updates in combination with the buffer load
+    # and buffer display calls.
+    # 
+    #
+    case ${update_type1} in
+    
+        ${_FX_UPDATE_SLOW})
+            update_type1=${_FX_UPDATE_FAST}
+            update_type2=${_FX_UPDATE_SLOW}
+        ;;
+    
+        ${_FX_BUFFER_LOAD})
+            update_type2=${_FX_DISPLAY_FULL}
+        ;;
+    
+        ${_FX_AREA_UPDATE_FLASH}|${_FX_AREA_UPDATE_INVERT})
+            update_type2=${_FX_UPDATE_FULL}
+        ;;
+
+    esac
+    
+    # Uncover a random area in the top-left quadrant of the screen.
+    #
+    let x1=0
+    let x2=${SCREEN_X_RES}/2
+    let y1=0
+    let y2=${SCREEN_Y_RES}/2
+    
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Uncover a random area in the top-right quadrant of the screen.
+    #
+    let x1=${SCREEN_X_RES}/2
+    let x2=${SCREEN_X_RES}
+    let y1=0
+    let y2=${SCREEN_Y_RES}/2
+
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Uncover a random area in the bottom-left quadrant of the screen.
+    #
+    let x1=0
+    let x2=${SCREEN_X_RES}/2
+    let y1=${SCREEN_Y_RES}/2
+    let y2=${SCREEN_Y_RES}
+    
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Uncover a random area in the bottom-right quadrant of the screen.
+    #
+    let x1=${SCREEN_X_RES}/2
+    let x2=${SCREEN_X_RES}
+    let y1=${SCREEN_Y_RES}/2
+    let y2=${SCREEN_Y_RES}
+    
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Finally, just uncover the whole thing.
+    #
+    let x1=0
+    let x2=${SCREEN_X_RES}
+    let y1=0
+    let y2=${SCREEN_Y_RES}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type2 >${_EINK_UPDATE_DISPLAY}
+
+    # Now, give the eInk HAL a totally bogus rectangle.  It shouldn't crash!
+    #
+    let x1=-${SCREEN_X_RES}
+    let x2=${SCREEN_X_RES}*2
+    let y1=-${SCREEN_Y_RES}
+    let y2=${SCREEN_Y_RES}*2
+
+    get_rnd $x1 $x2; let X1=${_RND}
+    get_rnd $x1 $x2; let X2=${_RND}
+    get_rnd $y1 $y2; let Y1=${_RND}
+    get_rnd $y1 $y2; let Y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $X1 $Y1 $X2 $Y2 >${_EINK_UPDATE_DISPLAY}
+}
+
+test_fast_page_turn_mode()
+{
+    # Fill the framebuffer with an eips pattern but don't update the display with it yet.
+    #
+    ${EIPS} -n -p
+    
+    # The pattern we put into the framebuffer contains all gray levels.  The fast display
+    # update will only cause the black and white bits to be displayed...
+    #
+    update_display_fast
+    
+    # ...but we'll get all the bits onto the screen with slow display update call.
+    #
+    update_display_slow
+}
+
+test_buffered_display_updates()
+{
+    # Fill the framebuffer with an eips pattern but don't update the display with it yet.
+    #
+    ${EIPS} -n -p
+    
+    # Load the hardware buffer with the pattern in the framebuffer...
+    #
+    update_buffer_load
+    
+    # ...and then display it, first non-flashing, then flashing.
+    #
+    update_buffer_display_part
+    update_buffer_display_full
+}
+
+scroll_up()
+{
+    if [ ${EI_ROW} -ge $(( ${SCREEN_Y_RES}/${EIPS_Y_RES} )) ]; then
+        eips -z ${EI_ROW_START} $1
+        let EI_ROW-=1
+    fi
+}
+
+keep_awake()
+{
+    # Have powerd send a fake user-input event.
+    #
+    powerd_test -i >/dev/null
+}
+
+announce_test()
+{
+    clear_screen
+    keep_awake
+    
+    update_display_rotate $(($count % 4))
+    logo_screen
+    
+    puts_init
+    puts "~~~~ running $1 test ~~~~"
+    sleep 1
+}
+
+# Stop the Framework if it's running.
+#
+if ( is_Framework_Running ); then
+    ${FRAMEWORK} stop
+else
+    clear_screen
+fi
+
+# Update the eInk logging level with the passed-in debugging value.
+#
+_EINK_LOGGING=`echo $((${_EINK_LOGGING_LEVEL}|${_EINK_DEBUG}))`
+echo ${_EINK_LOGGING} >${_EINK_LOGGING_CTRL}
+
+# Check if we have a _MAX_COUNT.
+#
+[ "`echo ${_MAX_COUNT} | awk '{exit!/^[0-9]+$/}' && echo ${_MAX_COUNT}`" ] || _MAX_COUNT=0
+let max_count=${_MAX_COUNT}
+
+# Turn off contrast and loop forever.
+#
+contrast_off
+let count=0
+
+while [ true ]; do
+
+    # Rotate through each of the four possible orientations.
+    #
+    update_display_rotate $(($count % 4))
+    
+    # Put up a grayscale ramp.
+    #
+    test_grayscale
+        
+    # Gray the screen using a flashing update.
+    #
+    get_indexed_gray $count
+    ${EIPS} -p $?
+    update_display_full
+    
+    # Only do the grayscale tests when we're doing VCOM.
+    #
+    if [ ${_VCOM_LOOP} -ne 0 ]; then
+        let count+=1
+        continue
+    fi
+    
+    # Output the current time.
+    #
+    date >/dev/console
+    
+    # Test contrast.
+    #
+    announce_test "contrast light"
+    contrast_light
+    test_grayscale
+    
+    announce_test "contrast medium"
+    contrast_medium
+    test_grayscale
+    
+    announce_test "contrast dark"
+    contrast_dark
+    test_grayscale
+    
+    contrast_off
+    
+    # Test area updates.
+    #
+    announce_test "non-flashing area updates"
+    test_area_updates ${_FX_UPDATE_PART}
+    
+    announce_test "flashing area updates"
+    test_area_updates ${_FX_UPDATE_FULL}
+    
+    announce_test "page area updates"
+    test_area_updates ${_FX_UPDATE_SLOW}
+    
+    announce_test "buffered area updates"
+    test_area_updates ${_FX_BUFFER_LOAD}
+    
+    announce_test "fake flash area updates"
+    test_area_updates ${_FX_AREA_UPDATE_FLASH}
+    
+    announce_test "invert area updates"
+    test_area_updates ${_FX_AREA_UPDATE_INVERT}
+    
+    announce_test "contrast light area update"
+    contrast_light
+    test_area_updates ${_FX_UPDATE_FULL}
+    
+    announce_test "contrast dark area update"
+    contrast_dark
+    test_area_updates ${_FX_UPDATE_FULL}
+    
+    contrast_off
+
+    # Test fast page turns.
+    #
+    announce_test "fast page-turn"
+    test_fast_page_turn_mode
+    
+    # Test the buffered display updates.
+    #
+    announce_test "buffered display"
+    test_buffered_display_updates
+    
+    # Time both a flashing and non-flashing update.
+    #
+    announce_test "update timing"
+    time_update_display_full
+    time_update_display_part
+    
+    # Wait for the power timer to expire and go through all of the power levels.
+    #
+    announce_test "power levels"
+    sleep ${_POWER_TIMER_DELAY}
+        
+    power_level_blank
+    power_level_standby
+    power_level_sleep
+    power_level_off
+    power_level_on
+    
+    # Put up each of the screens that the eInk Shim supports, waiting a
+    # second between each.  Note that these screens automatically rotate
+    # the display back to the portrait orientation.
+    #
+    announce_test "lowbatt screen"
+    display_lowbat_screen
+    sleep 1
+    wake_screen
+    
+    announce_test "reboot screen"
+    display_reboot_screen
+    sleep 1
+    wake_screen
+    
+    announce_test "logo screen"
+    display_logo_screen
+    sleep 1
+
+    announce_test "update screen init"
+    display_update_screen_initial
+    sleep 1
+    
+    announce_test "update screen done"
+    display_update_screen_success
+    sleep 1
+    
+    announce_test "update screen fail 1"
+    display_update_screen_failure
+    sleep 1
+    
+    announce_test "update screen fail 2"
+    display_update_screen_failure_no_wait
+    sleep 1
+    
+    announce_test "repair screen"
+    display_repair_screen
+    sleep 1
+    wake_screen
+    
+    announce_test "factory screen"
+    display_amazon_screen
+    sleep 1
+    
+    announce_test "recovery-util screen"
+    recovery_util_screen
+    sleep 1
+    
+    # The update screens put up the progressbar and success moves it
+    # to 100%.  Clear it so that we can update it ourselves for our
+    # loop.  Clear the screen first so that we don't get an ugly
+    # blank rectangle where the progressbar was and now where the
+    # progressbar badges still are.
+    #
+    clear_screen
+    clear_progressbar
+        
+    # Rotate (again) through each of the four possible orientations.
+    #
+    update_display_rotate $(($count % 4))
+    
+    # Put up the AmazonKindle logo using a non-flashing update,
+    # put up the progress bar, and then output some information
+    # about the eInk HAL environment, scrolling as necessary.
+    #
+    logo_screen
+    
+    set_progressbar_xy $(( (${SCREEN_Y_RES} * 2)/3 ))
+    update_progressbar $(($count % 100))
+        
+    get_eink_waveform_version
+    get_eink_commands_version
+    get_eink_temperature
+    get_eink_panel_id
+    get_eink_vcom
+    
+    let count+=1
+    sleep 1
+
+    clear_progressbar
+    puts_init
+    puts "~~~~ $count diags loop(s) completed ~~~~"          #  1
+    puts                                                     #  2
+    puts "Waveform version:  ${_WAVEFORM_EINK_VERSION}"      #  3
+    puts "Commands version:  ${_COMMANDS_EINK_VERSION}"      #  4
+    puts                                                     #  5
+    puts "Flash update time: ${_TIME_UPDATE_FULL}"           #  6
+    puts "Non-flashing:      ${_TIME_UPDATE_PART}"           #  7
+    puts                                                     #  8
+    puts "Temperature in C:  ${_TEMPERATURE}"                #  9
+    puts                                                     # 10
+    
+    # On a 600x800 display, we get 10 lines.  So, scroll everything
+    # else into view if necessary.
+    #
+    scroll_up 10
+    puts "Panel ID:          ${_PANEL_ID}"                   # 11
+    
+    scroll_up 10
+    puts "VCOM:              ${_VCOM}"                       # 12
+    
+    scroll_up 10
+    puts                                                     # 13
+
+    scroll_up 10
+    puts "waiting ${_LOOP_DELAY} seconds to begin again"     # 14
+        
+    # Wait, clear the screen, and either stop because we've reached
+    # the specified number of loops; or, start over.
+    #
+    sleep ${_LOOP_DELAY}
+    clear_screen
+
+    if [ $max_count -ne 0 ] && [ $count -ge $max_count ]; then
+        break
+    fi
+done

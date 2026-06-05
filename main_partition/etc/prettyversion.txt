@@ -1,0 +1,1 @@
+Kindle 3.4 (~~otaVersion~~)

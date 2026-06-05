@@ -1,0 +1,370 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_MNTUS=/etc/sysconfig/mntus
+[ -f $_MNTUS ] && . $_MNTUS
+
+_RESET_TYPE=/proc/bd/dirty_boot_flag
+_SOFT=00000000
+_HARD=00000001
+
+_SOFT_RESET=1028
+_HARD_RESET=1029
+
+# Prototype/reference boards are always used for development; so, don't ever block them.
+#
+_DONT_HALT_ON_REPAIR_FILE=${MNTUS_MP}/DONT_HALT_ON_REPAIR
+if ( is_PROTO ); then
+	touch ${_DONT_HALT_ON_REPAIR_FILE}
+else
+	touch /dev/null
+fi
+
+_MW_CTRL=/proc/bd/mw_flags
+_MW_USE_XORG=16384
+_MW_FLAGS=
+
+_CVM=cvm
+
+# Enforce the locale for PDF (among potentially other) to see UTF8 properly.
+#
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+
+log_reset_type()
+{
+	_RESET=`cat ${_RESET_TYPE}`
+
+	case ${_RESET} in
+		${_SOFT})
+			msg "logging reset type: soft" I
+			echo ${_SOFT_RESET} >${FRAMEWORK_EXCEPTION_FILE}
+			;;
+		
+		${_HARD})
+			msg "logging reset type: hard" I
+			echo ${_HARD_RESET} >${FRAMEWORK_EXCEPTION_FILE}
+			;;
+	esac
+}
+
+splash_screen()
+{
+	# Get the display back into its usual booting-up state.
+	#
+	display_logo_screen
+}
+
+clear_screen()
+{
+	${EIPS} -c
+}
+
+start_framework_foreground()
+{
+	[ -f ${FRAMEWORK_STOP_FILE} ] && rm -f ${FRAMEWORK_STOP_FILE}
+	[ -f ${FRAMEWORK_EXCEPTION_FILE} ] && rm -f ${FRAMEWORK_EXCEPTION_FILE}
+
+	# Check to see whether eInk needs to be restarted or not.
+	#
+	eink_restart_check
+	
+	# Put up the splash screen if we're manually starting up the framework or
+	# it's been stopped cleanly by the system and we're starting it back up.
+	#
+	if [ ${SYSTEM_STARTUP} -eq 0 ] || ( is_Framework_Stopped ); then
+		splash_screen
+	else
+		# Get the boot progressbar up to at least where it's supposed to be
+		# before we transition into the Framework.
+		#
+		set_boot_progress ${MAX_BOOT_PROGRESS} "`basename $0`"
+		
+		# Only log the reset type on startup since the Framework can get restarted
+		# independently of booting the device.
+		#
+		log_reset_type
+	fi
+}
+
+start_framework_background()
+{
+	${START_FRAMEWORK} &
+}
+
+do_suspend()
+{
+	echo "suspending"
+	echo "mem" >/sys/power/state
+}
+
+halt_charger()
+{
+	if [ -x ${KDB} ]; then
+		_CHARGER_STATE=`kdb get system/driver/charger/SYS_CHARGER_STATE`
+		
+		if [ -f "${_CHARGER_STATE}" ]; then
+			echo -n 0 >${_CHARGER_STATE}
+		fi
+	fi
+}
+
+forever_sleep()
+{
+	while [ true ]; do
+		# If, for some reason, we got a bad read of the battery ID before, then reboot
+		# the device since we've already put up the "Repair Needed" screen.
+		#
+		if ( battery_id_valid ); then
+			reboot
+		else
+			# Powering down the device, unfortunately, doesn't halt the charger.  So, we
+			# do so here and we put the device into the suspend state.
+			#
+			halt_charger
+			do_suspend
+			
+			# If/when we are resumed, wait a minute before starting this sequence up again.
+			#
+			echo "resuming"
+			sleep 60
+		fi
+	done
+}
+
+repair_needed()
+{
+	_WHICH_REPAIR=$1
+	
+	display_repair_screen
+	
+	# Since we now put up the repair screen if the Framework can't be started up
+	# or the battery is invalid, we put a little note in the bottom right
+	# hand corner of the display to say which problem caused us to put up the
+	# repair screen.
+	#
+	_EIPS_X_UPDATE_MSG=$(( (${SCREEN_X_RES}/${EIPS_X_RES} - ${#_WHICH_REPAIR}) ))
+	_EIPS_Y_UPDATE_MSG=$(( (${SCREEN_Y_RES}/${EIPS_Y_RES} - 1) ))
+	wake_screen
+	${EIPS} ${_EIPS_X_UPDATE_MSG} ${_EIPS_Y_UPDATE_MSG} "${_WHICH_REPAIR}"
+	sleep_screen
+	
+	if [ -e ${_DONT_HALT_ON_REPAIR_FILE} ]; then
+		msg "Found DONT_HALT_ON_REPAIR file: exiting without halting" W
+		exit 2
+	else
+		reboot_screen_asis
+		case ${_WHICH_REPAIR} in
+			framework)
+				# Set count to 1 when halting to allow
+				# another opportunity at starting up the
+				# Framework upon subsequent user initiated
+				# boot.
+				echo 1 > ${FRAMEWORK_REBOOT_COUNT_FILE}
+				halt
+			;;
+			battery)
+				forever_sleep
+			;;
+		esac
+	fi
+}
+
+battery_id_check()
+{
+	_RES=$FALSE
+	
+	# We're comparing the current battery ID with a list of valid IDs.  So, there
+	# must be at least two items passed in.
+	#
+	if [ $# -ge 2 ]; then
+		
+		# The first item passed in is the current battery ID.
+		#
+		_BATT_ID=$1
+		shift
+		
+		# Walk thru the entire list of battery IDs, or stop when we find a match.
+		#
+		_DONE=0
+		
+		while [ $# -gt 0 ] && [ ${_DONE} -eq 0 ]; do
+		
+			_VALID_BATT_ID=$1
+			
+			if [ ${_VALID_BATT_ID} -eq ${_BATT_ID} ]; then
+				_RES=$TRUE
+				_DONE=1
+			fi
+			
+			shift
+		
+		done
+	fi
+	
+	return ${_RES}
+}
+
+battery_id_valid()
+{
+	_RES=$TRUE
+	
+	if [ -x ${KDB} ]; then
+		_BATT_IDS_VALID=`kdb get system/driver/charger/SYS_BATT_IDS_VALID`
+		_BATT_ID=`kdb get system/driver/charger/SYS_BATT_ID`
+		
+		if [ -f "${_BATT_ID}" ] && [ -n "${_BATT_IDS_VALID}" ]; then
+			_BATT_ID=`cat ${_BATT_ID}`
+			
+			if ( ! battery_id_check ${_BATT_ID} ${_BATT_IDS_VALID} ); then
+				_RES=$FALSE
+			fi
+		fi
+	fi
+	
+	return ${_RES}
+}
+
+clean_up()
+{
+	# Check to see whether the installed battery is valid or not.
+	#
+	if ( ! battery_id_valid ); then
+		
+		# Only put us into repair-needed mode if the battery in use is
+		# invalid and we're on a production device.  Otherwise, just
+		# put a warning in the log about it.
+		#
+		if ( ! is_PVT ); then
+			msg "unqualified battery in use on development device" W
+		else
+			repair_needed "battery"
+		fi
+	fi
+
+	# Check to see whether the Framework is starting up or not.  If not, don't let
+	# it keep doing so by putting us into repair-needed mode.
+	#
+	if [ -e ${FRAMEWORK_RETRIES_COUNT_FILE} ]; then
+		rm -rf ${FRAMEWORK_RETRIES_COUNT_FILE}
+	fi
+
+	if [ -e ${FRAMEWORK_REBOOT_COUNT_FILE} ]; then
+		T=`cat ${FRAMEWORK_REBOOT_COUNT_FILE}`
+		if [ ${T} -ge 2 ]; then
+			repair_needed "framework"
+		fi
+	fi
+}
+
+start_framework()
+{
+	# In a non-engineering build, if we don't have a screen, we would have already
+	# halted the device by now in the init.d/video script.
+	#
+	# On engineering builds, however, the init.d/video script lets us continue
+	# booting so that, presumably, we can fix whatever problem there is that's
+	# causing us not to have a screen.  And, if we don't have a screen, the
+	# Framework won't come up and will go into "Repair Needed" mode.  To
+	# prevent all of that, we just don't start the Framework up at all if
+	# there's no screen.
+	#
+	if [ ! -c ${SCREEN} ]; then
+		msg "not starting framework on account of no screen" C
+	else
+		start_framework_foreground
+		
+		if [ -f ${START_FRAMEWORK} ]; then
+			echo 0 > ${FRAMEWORK_STOPPED}
+			echo 0 > ${FRAMEWORK_RUNNING}
+			echo 1 > ${FRAMEWORK_STARTED}
+			start_framework_background &
+		fi
+	fi
+}
+
+stop_framework()
+{
+	# Wake the Framework (and associated devices) if it's sleeping.
+	#
+	wake_framework
+
+	echo 1 > ${FRAMEWORK_STOPPED}
+	touch ${FRAMEWORK_STOP_FILE}
+
+	killall -TERM ${_CVM} >/dev/null 2>/dev/null && sleep 1
+
+	# Clear the screen if we're manually stopping the framework.
+	#
+	if [ ${SYSTEM_SHUTDOWN} -eq 0 ]; then
+		clear_screen
+	fi
+	
+	echo 0 > ${FRAMEWORK_STARTED}
+	echo 0 > ${FRAMEWORK_RUNNING}
+}
+
+start_x()
+{
+	# Tell microwindows that we want to use its xorg implementation instead
+	# of its eInk HAL implementation.
+	#
+	let _MW_FLAGS=0x`cat ${_MW_CTRL}`
+	_MW_FLAGS=`echo $((${_MW_FLAGS}|${_MW_USE_XORG}))`
+	
+	echo ${_MW_FLAGS} >${_MW_CTRL}
+}
+
+stop_x()
+{
+	# Tell microwindows that we don't want to use its xorg implementation but to
+	# instead use its eInk HAL implementation.
+	#
+	let _MW_FLAGS=0x`cat ${_MW_CTRL}`
+	_MW_FLAGS=`echo $((${_MW_FLAGS}&~${_MW_USE_XORG}))`
+
+	echo ${_MW_FLAGS} >${_MW_CTRL}
+}
+
+start()
+{
+	clean_up
+	
+	boot_milestone "Fr00"
+	start_framework
+}
+
+case "$1" in
+	reset|restart|force-reload)
+		msg "resetting booklet framework" I
+		wait_framework_done
+		stop_x
+		start
+		;;
+
+	startx)
+		msg "starting booklet framework for x" I
+		start_x
+		start
+		;;
+
+	start)
+		msg "starting booklet framework" I
+		stop_x
+		start
+		;;
+
+	stop)
+		msg "stopping booklet framework" I
+		stop_framework
+		wait_framework_done_guts
+		;;
+
+	*)
+		msg "Usage: $0 {startx|start|stop|reset|restart|force-reload}" W >&2
+		exit 1
+		;;
+
+esac

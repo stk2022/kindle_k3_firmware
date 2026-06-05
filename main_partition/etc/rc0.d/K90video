@@ -1,0 +1,1124 @@
+#!/bin/sh
+
+_IDME_FUNCTIONS=/usr/sbin/idme_functions
+[ -f ${_IDME_FUNCTIONS} ] && . ${_IDME_FUNCTIONS}
+
+_KERNEL_VERSION=`uname -r`
+_MODULE_BASE=/lib/modules/${_KERNEL_VERSION}
+_EINK_BASE=${_MODULE_BASE}/kernel/drivers/video/eink
+_EINK_SHIM=eink_fb_shim
+_EINK_HAL=eink_fb_hal
+_EINK_SHIM_PATH=${_EINK_BASE}/legacy/${_EINK_SHIM}
+_EINK_HAL_PATH=${_EINK_BASE}/hal/${_EINK_HAL}
+
+_BOOTARGS=/proc/cmdline
+_FAKEARGS=/tmp/.cmdline
+
+_DEV_CHECK='dev=true'
+_DEV_EINK='dev=eink'
+
+_UNKNOWN_TYPE=0
+_BROADSHEET_TYPE=1
+_AUO_TYPE=2
+
+_BROADSHEET=broads
+_AUO=auo
+_EMULATOR=emu
+_CONTROLLER_BROADSHEET='eink='${_BROADSHEET}
+_CONTROLLER_AUO='eink='${_AUO}
+_CONTROLLER_EMULATOR='eink='${_EMULATOR}
+_CONTROLLER=${_EMULATOR}
+
+_ORIENTATION_LANDSCAPE=1
+_ORIENTATION_PORTRAIT=0
+_UPSIDE_DOWN=0
+
+_PANEL_SIZE_6_0_INCH=6
+_PANEL_SIZE_9_7_INCH=9
+_PANEL_SIZE_DEFAULT=0
+
+_CONTROLLER_ORIENTATION=${_ORIENTATION_PORTRAIT}
+_CONTROLLER_UPSIDE_DOWN=${_UPSIDE_DOWN}
+_CONTROLLER_SIZE=${_PANEL_SIZE_DEFAULT}
+_CONTROLLER_BPP=
+
+_FINISH_STARTUP_PROGRESS=100
+_PROMOTE_FLASHING_UPDATES=1
+_START_POWERD=1
+_SHOW_LOGO=1
+_LOW_BATT=0
+
+_ECU=/usr/sbin/ecu
+_EWU=/usr/sbin/ewu
+_EU=/usr/sbin/eu
+
+# Orientation Support
+#
+_ORIENTATION_FILE=${EINK_ORIENTATION_FILE}
+_ORIENTATION_PREFS=
+
+# Bitdepth/VCOM Support
+#
+_BITDEPTH_FILE=${EINK_BITDEPTH_FILE}
+_VCOM_FILE=${EINK_VCOM_FILE}
+
+# Diags Support
+#
+_DIAGS=/opt/eink/scripts/diags
+_DIAGS_PIDFILE=/var/run/`basename ${_DIAGS}`.pid
+_DIAGS_ARG_DEBUG=${2:-0} # 4294901824 -> 0xFFFF0040 (full eInk debugging)
+_DIAGS_ARG_DELAY=${3:-5} # default to 5 seconds between loops
+_DIAGS_ARG_DIAGS=${4:-0} # 0 -> diags, non-zero VCOM
+_DIAGS_ARG_COUNT=${5:-0} # 0 -> forever, non-zero is maxcount
+_DIAGS_ARG_VCOM=1
+
+# VCOM Support
+#
+_EINK_REG=${EINK_PROC}/eink_reg
+_VCOM_REG=0232
+_VCOM_START_VAL=0101
+_VCOM_STOP_VAL=0000
+
+# Random Rotate Support
+#
+_RANDOM_ROTATE=/opt/eink/scripts/random_rotate
+_RANDOM_ROTATE_PIDFILE=/var/run/`basename ${_RANDOM_ROTATE}`.pid
+
+# Update Waveform & Commands Support
+#
+_DONT_UPDATE_FILE=${EINK_RW_DIR}dont_update
+
+_EINK_WAVEFORM_VERSION=${EINK_PROC}/waveform_version
+_WAVEFORM_EINK_VERSION=
+_WAVEFORM_RATE=
+
+_WAVEFORM_FILES=`ls /opt/eink/images/*.wbf` 2>/dev/null
+_WAVEFORM_EINK_PANELID=
+_WAVEFORM_FILE_PANELID=
+
+_EINK_COMMANDS_VERSION=${EINK_PROC}/commands_version
+_COMMANDS_FILE=`ls /opt/eink/images/cmd0047_*.bin` 2>/dev/null
+_COMMANDS_FILE_VERSION=
+_COMMANDS_EINK_VERSION=
+
+# Microwindows Support
+#
+_MW_CTRL=/proc/bd/mw_flags
+_MW_MARIO=0
+_MW_DEBUG=1
+
+_MW_DISPLAY_UPSIDE_DOWN=2048
+_MW_ALPHABLEND_ORIGINAL=256
+_MW_MISSING_BUTTONS=8
+
+_MW_DRIVEMODE_ONLINE=
+_MW_FLAGS=
+
+# Module Parameter Support
+#
+_SAVED_SPLASH_SCREEN_UP=0   #for preserving which, if any, splash screens is currently up
+
+# Miscellaneous Runtime Control Parameters
+#
+_PROMOTE_FLASHING_UPDATES=0 #if non-zero, promote all flashing updates to highest possible
+_EINK_DEBUG=0               #if non-zero, put eInk driver into debug mode
+
+_PROMOTE_FLASHING_UPDATES_CTRL=/sys/devices/platform/eink_fb.0/promote_flashing_updates
+_RUNNING_DIAGS_CTRL=/sys/devices/platform/eink_fb.0/running_diags
+_EINK_DEBUG_CTRL=/sys/devices/platform/eink_fb.0/eink_debug
+_VCOM_CTRL=/sys/devices/platform/eink_fb.0/vcom
+
+_PREFLIGHT_FAILURE=/sys/devices/platform/eink_fb.0/preflight_failure
+_SPLASH_SCREEN_UP=/sys/devices/platform/eink_fb.0/splash_screen_up
+
+_IPU_SYSFS=/sys/devices/platform/mxc_ipu
+_EINK_CONTROLLER_TYPE_FILE=${_IPU_SYSFS}/eink_controller_type
+
+get_orientation()
+{
+    # Look for the orientation prefs file.
+    #
+    if [ -f "${_ORIENTATION_FILE}" ]; then
+        _ORIENTATION_PREFS=`cat ${_ORIENTATION_FILE}`
+    fi
+    
+    # If the prefs file exists, apply its values.
+    #
+    if [ ! -z "${_ORIENTATION_PREFS}" ]; then
+        _CONTROLLER_ORIENTATION="`echo ${_ORIENTATION_PREFS} | awk '{ print substr($1, 1, 1); }'`"
+        _CONTROLLER_UPSIDE_DOWN="`echo ${_ORIENTATION_PREFS} | awk '{ print substr($2, 1, 1); }'`"
+    fi
+}
+
+set_orientation()
+{
+    echo ${_CONTROLLER_ORIENTATION} ${_CONTROLLER_UPSIDE_DOWN} >${_ORIENTATION_FILE}
+}
+
+get_bitdepth()
+{
+    # If the controller's bitdepth isn't already set, set it. 
+    #
+    if [ -z "${_CONTROLLER_BPP}" ]; then
+    
+        # If the prefs file exists, apply its value.
+        #
+        if [ -f "${_BITDEPTH_FILE}" ]; then
+            _CONTROLLER_BPP=`cat ${_BITDEPTH_FILE}`
+        fi
+        
+        # The bitdepth of eInk HAL modules can be 1, 2, 4, or 8.
+        #
+        case ${_CONTROLLER_BPP} in
+            1|2|4|8)
+            ;;
+            
+            # Setting the bitdepth to zero will force the eInk HAL module
+            # to use its own default value.
+            #
+            *)
+                _CONTROLLER_BPP=0
+            ;;
+        esac
+    fi
+}
+
+stop_eink()
+{
+    # Unconditionally attempt to remove any of the eInk HAL modules that might
+    # be in use in the reverse order that they would have been loaded in.
+    #
+    rmmod ${_EINK_SHIM} >/dev/null 2>/dev/null
+    
+    rmmod ${_EINK_HAL}_${_BROADSHEET} >/dev/null 2>/dev/null
+    rmmod ${_EINK_HAL}_${_AUO} >/dev/null 2>/dev/null
+    rmmod ${_EINK_HAL}_${_EMULATOR} >/dev/null 2>/dev/null
+    
+    rmmod ${_EINK_HAL} >/dev/null 2>/dev/null
+
+    # We might be trying to start video right back up.  So, give everything
+    # a chance to "settle down" before doing so.
+    #
+    sleep 1
+}
+
+load_eink_fb_common()
+{
+    # Log our module parameters when debugging is on.
+    #
+    grep -q ${_DEV_CHECK} ${_BOOTARGS}
+    _RES1=$?
+    
+    grep -q ${_DEV_EINK} ${_BOOTARGS}
+    _RES2=$?
+
+    if [ ${_RES1} -eq 0 ] || [ ${_RES2} -eq 0 ]; then
+        _EINK_DEBUG=1
+    fi
+
+    if [ $1 -eq 1 ]; then
+        msg "eink_debug=${_EINK_DEBUG}" I
+    fi
+
+    if [ $1 -eq 1 ]; then
+        
+        # Detect which controller is present.
+        #
+        CONTROLLER_TYPE=${_UNKNOWN_TYPE}
+        if [ -f "${_EINK_CONTROLLER_TYPE_FILE}" ]; then
+            _CONTROLLER_TYPE=`cat ${_EINK_CONTROLLER_TYPE_FILE}`
+        fi
+
+        case ${_CONTROLLER_TYPE} in
+
+            ${_BROADSHEET_TYPE})
+                _CONTROLLER=${_BROADSHEET}
+                ;;
+ 
+             ${_AUO_TYPE})
+                _CONTROLLER=${_AUO}
+                ;;
+   
+            ${_UNKNOWN_TYPE})
+                _CONTROLLER=${_EMULATOR}
+                ;;
+        esac
+
+        msg "Controller set to ${_CONTROLLER}" I
+    fi
+}
+
+load_controller()
+{
+    # Assume failure.
+    #
+    _RES_CONTROLLER=1
+    
+    # Check to see whether the default orientation and bitdepth should be overriden.
+    #
+    get_orientation
+    get_bitdepth
+    
+    # Now, apply the controller-specific settings.
+    #
+    case ${_CONTROLLER} in
+    
+        ${_BROADSHEET})
+            insmod ${_EINK_HAL_PATH}_${_BROADSHEET}.ko bs_orientation=${_CONTROLLER_ORIENTATION}    \
+                                                            bs_bpp=${_CONTROLLER_BPP}               \
+                                                            bs_upside_down=${_CONTROLLER_UPSIDE_DOWN}
+            ;;
+ 
+        ${_AUO})
+            insmod ${_EINK_HAL_PATH}_${_AUO}.ko auo_orientation=${_CONTROLLER_ORIENTATION}    \
+                                                            auo_bpp=${_CONTROLLER_BPP}               
+            ;;
+        
+        ${_EMULATOR})
+            insmod ${_EINK_HAL_PATH}_${_EMULATOR}.ko emu_orientation=${_CONTROLLER_ORIENTATION}     \
+                                                            emu_size=${_CONTROLLER_SIZE}            \
+                                                            emu_bpp=${_CONTROLLER_BPP}
+            ;;
+            
+    esac
+    
+    _RES_CONTROLLER=$?
+}
+
+bypass_controller()
+{
+    # Don't bypass the controller if its module exists.
+    #
+    if [ -f ${_EINK_HAL_PATH}_${_CONTROLLER}.ko ]; then
+        return $FALSE
+    else
+        return $TRUE
+    fi
+}
+
+no_gc16_penalty()
+{
+    _WAVEFORM_EINK_VERSION="`cat ${_EINK_WAVEFORM_VERSION}`"
+    
+    # Full waveform versions are of the form PPPP_XLLL_DD_TTVVSS_B (MMM, S/N NNN, RRHz), and the
+    # refresh rate is the RRHz substring.
+    #
+    _WAVEFORM_RATE="`echo ${_WAVEFORM_EINK_VERSION} | awk '{ print substr($5, 1, 2); }'`"
+    
+    # The 85Hz waveforms use the same table for both GC4 and GC16 entries.  Hence, there's
+    # no GC16 penalty in that case (i.e., both GC4 and GC16 are GC16).
+    #
+    if [ "${_WAVEFORM_RATE}" -eq 85 ]; then
+        return $TRUE
+    else
+        return $FALSE
+    fi
+}
+
+load_eink_fb_1st()
+{
+    # Simplify the process of matching waveforms to panel IDs.
+    #
+    create_waveform_to_panel_id_access ${_WAVEFORM_FILES}
+    
+    # Perform 1st/2nd common activities.
+    #
+    load_eink_fb_common 1
+    
+    # Use the eInk HAL module if specified or if the default controller
+    # needs to be bypassed.
+    #
+    grep -q ${_CONTROLLER_BROADSHEET} ${_BOOTARGS}
+    _RES_BROADS=$?
+
+    if [ ${_RES_BROADS} -eq 0 ]; then
+        _CONTROLLER=${_BROADSHEET}
+    fi
+
+    grep -q ${_CONTROLLER_AUO} ${_BOOTARGS}
+    _RES_AUO=$?
+
+    if [ ${_RES_AUO} -eq 0 ]; then
+        _CONTROLLER=${_AUO}
+    fi
+
+    grep -q ${_CONTROLLER_EMULATOR} ${_BOOTARGS}
+    _RES_EMU=$?
+
+    if [ ${_RES_EMU} -eq 0 ] || ( bypass_controller ); then
+        _CONTROLLER=${_EMULATOR}
+    fi
+    
+    # Load the eInk HAL, the eInk HAL controller module, and the eInk Shim.
+    #
+    insmod ${_EINK_HAL_PATH}.ko
+    _RES_HAL=$?
+    
+    load_controller
+
+    insmod ${_EINK_SHIM_PATH}.ko splash_screen_up=${_SAVED_SPLASH_SCREEN_UP} show_logo=${_SHOW_LOGO}
+    _RES_SHIM=$?
+    
+    # Check to see if any of the modules failed to load.
+    #
+    if [ ${_RES_HAL} -eq 0 ] && [ ${_RES_CONTROLLER} -eq 0 ]  && [ ${_RES_SHIM} -eq 0 ]; then
+        if [ ${_EINK_DEBUG} -eq 1 ]; then
+            msg "driver=${_CONTROLLER}" I
+        fi
+    
+        # Initialize miscellaneous runtime control parameters.
+        #
+        echo ${_EINK_DEBUG} >${_EINK_DEBUG_CTRL}
+    else
+        video_halt
+    fi
+}
+
+load_eink_fb_2nd()
+{
+    # Perform 1st/2nd common activities.
+    #
+    load_eink_fb_common 2
+    
+    if [ ${_EINK_DEBUG} -eq 1 ]; then
+        msg "splash_screen_up=${_SAVED_SPLASH_SCREEN_UP}" D
+    fi
+
+    # Initialize miscellaneous runtime control parameters.
+    #
+    if [ -f ${_PROMOTE_FLASHING_UPDATES_CTRL} ]; then
+        echo ${_PROMOTE_FLASHING_UPDATES} >${_PROMOTE_FLASHING_UPDATES_CTRL};
+    fi
+    
+    if [ -f ${_VCOM_FILE} ] && [ -f ${_VCOM_CTRL} ]; then
+        vcom=`cat ${_VCOM_FILE}`
+        echo $vcom >${_VCOM_CTRL}
+    fi
+        
+    # Set the microwindows flags appropriately.
+    #
+    _MW_FLAGS=${_MW_MARIO}
+    
+    # True Mario boards have no buttons.  So, help them out.
+    #
+    if ( is_Mario ); then
+        _MW_FLAGS=`echo $((${_MW_FLAGS}|${_MW_MISSING_BUTTONS}))`
+    fi
+    
+    # Say whether we're upside down or not.
+    #
+    get_orientation
+    
+    if [ ${_CONTROLLER_UPSIDE_DOWN} -ne 0 ]; then
+        _MW_FLAGS=`echo $((${_MW_FLAGS}|${_MW_DISPLAY_UPSIDE_DOWN}))`
+    fi
+    
+    # Enable microwindows debugging if eInk debugging is enabled.
+    #
+    if [ ${_EINK_DEBUG} -eq 1 ]; then
+        _MW_FLAGS=`echo $((${_MW_FLAGS}|${_MW_DEBUG}))`
+    fi
+    
+    # If GC16 and GC4 update times match, use the original (non-2bpp-only) microwindows
+    # alphablending code.
+    #
+    if ( no_gc16_penalty ); then
+        _MW_FLAGS=`echo $((${_MW_FLAGS}|${_MW_ALPHABLEND_ORIGINAL}))`
+    fi
+    
+    echo ${_MW_FLAGS} >${_MW_CTRL}
+    
+    # Write the path out that one uses to determine whether drivemode is online
+    # or not.  We use this from microwindows to ignore snag keys.
+    #
+    _MW_DRIVEMODE_ONLINE=`kdb get system/driver/usb/gadget/SYS_GADGET_ONLINE`
+    
+    if [ -n ${_MW_DRIVEMODE_ONLINE} ]; then
+        echo -n ${_MW_DRIVEMODE_ONLINE} >${DRIVEMODE_ONLINE}
+    fi
+    
+    # Start VNC.
+    #
+    start_vnc
+}
+
+load_eink_fb()
+{
+    load_eink_fb_1st
+    load_eink_fb_2nd
+    
+    # Don't start powerd when we've been asked not to.
+    #
+    if [ ${_START_POWERD} -ne 0 ]; then
+        start_powerd
+    fi
+}
+
+clear_screen()
+{
+    ${EIPS} -c
+}
+
+stop_video()
+{
+    # Stop the Framework if it's running.
+    #
+    if ( is_Framework_Running ); then
+        ${FRAMEWORK} stop
+    else
+        clear_screen
+    fi
+    
+    # Stop browserd.
+    #
+    stop_browserd
+    
+    # Stop VNC.
+    #
+    stop_vnc
+    
+    # Stop powerd.
+    #
+    stop_powerd
+
+    # Stop eInk.
+    #
+    stop_eink
+}
+
+start_video()
+{
+    # Do a little bookkeepping.
+    #
+    restart_framework=0
+    fake_startup=1
+    
+    if ( is_Framework_Running ); then
+        restart_framework=1
+    fi
+    
+    if [ ${SYSTEM_STARTUP} -ne 0 ]; then
+        fake_startup=0
+    fi
+    
+    # Stop all video-related activity that's currently running.
+    #
+    stop_video
+    
+    # Say that we're booting up if we need to.
+    #
+    if [ $fake_startup -eq 1 ]; then
+        platform_startup_begin
+    fi
+
+    # Load the eInk HAL and related modules (including VNC and powerd).
+    #
+    load_eink_fb
+    
+    # Start the Framework back up if we need to.
+    #
+    if [ $restart_framework -eq 1 ]; then
+        ${FRAMEWORK} start
+    fi
+
+    # Say we're no longer booting up if we need to.
+    #
+    if [ $fake_startup -eq 1 ]; then
+        platform_startup_end
+    fi
+}
+
+start_eink_diags()
+{
+    if [ -x "${_DIAGS}" ]; then
+        ${_DIAGS} ${_DIAGS_ARG_DEBUG} ${_DIAGS_ARG_DELAY} ${_DIAGS_ARG_DIAGS} ${_DIAGS_ARG_COUNT} &
+        if [ $? ] ; then
+            echo 1 >${_RUNNING_DIAGS_CTRL}
+            echo $! >${_DIAGS_PIDFILE}
+        fi
+    fi
+}
+
+stop_eink_diags()
+{
+    if [ -r "${_DIAGS_PIDFILE}" ]; then
+        kill `cat ${_DIAGS_PIDFILE}`
+        echo 0 >${_RUNNING_DIAGS_CTRL}
+        
+        # We might have killed diags while the screen was rotated and/or still sleeping.
+        # So, ensure that it's both awake and back into its portrait orientation.
+        #
+        wake_screen
+        display_update_portrait
+        
+        clear_screen
+    fi
+}
+
+start_vcom()
+{
+    if [ -f ${_EINK_REG} ]; then
+        echo ${_VCOM_REG} ${_VCOM_START_VAL} >${_EINK_REG}
+        _DIAGS_ARG_DIAGS=${_DIAGS_ARG_VCOM}
+        
+        start_eink_diags
+    fi
+}
+
+stop_vcom()
+{
+    if [ -f ${_EINK_REG} ]; then
+        echo ${_VCOM_REG} ${_VCOM_STOP_VAL} >${_EINK_REG}
+        stop_eink_diags
+    fi
+}
+
+start_random_rotate()
+{
+    if [ -x "${_RANDOM_ROTATE}" ]; then
+        ${_RANDOM_ROTATE} $2 &
+        if [ $? ] ; then
+            echo $! >${_RANDOM_ROTATE_PIDFILE}
+        fi
+    fi
+}
+
+stop_random_rotate()
+{
+    if [ -r "${_RANDOM_ROTATE_PIDFILE}" ]; then
+        kill `cat ${_RANDOM_ROTATE_PIDFILE}`
+    fi
+}
+
+start_lifeguard()
+{
+    if [ -x ${EINK_LIFEGUARD} ]; then
+        ${EINK_LIFEGUARD} &
+        if [ $? ]; then
+            echo $! >${EINK_LIFEGUARD_PIDFILE}
+        fi
+    fi
+}
+
+stop_lifeguard()
+{
+    if [ -r "${EINK_LIFEGUARD_PIDFILE}" ]; then
+        kill `cat ${EINK_LIFEGUARD_PIDFILE}`
+    fi
+}
+
+start_broads()
+{
+    # Stop all video-related activity that's currently running.
+    #
+    stop_video
+
+    # Set up for debugging and loading the broadsheet controller by faking the cmdline.
+    #
+    echo "${_DEV_EINK} ${_CONTROLLER_BROADSHEET}" >${_FAKEARGS}
+    _BOOTARGS=${_FAKEARGS}
+    
+    # If requested, use the passed-in orientation, bit-depth, and whether
+    # the orientation is upside down or not.  Also, a single argument,
+    # regardless of its actual value, means we're in flash-update mode.
+    # So, bring things back up quietly.
+    #
+    case $# in
+        1)
+            _START_POWERD=0
+            _SHOW_LOGO=0
+            ;;
+        
+        2)
+            _CONTROLLER_ORIENTATION=$1
+            _CONTROLLER_BPP=$2
+            set_orientation
+            ;;
+
+        3)
+            _CONTROLLER_ORIENTATION=$1
+            _CONTROLLER_BPP=$2
+            _CONTROLLER_UPSIDE_DOWN=$3
+            set_orientation
+            ;;
+            
+        *)
+            ;;
+    esac
+    
+    # Load Broadsheet as though it were coming up from scratch.
+    #
+    load_eink_fb
+}
+
+start_auo()
+{
+    # Stop all video-related activity that's currently running.
+    #
+    stop_video
+
+    # Set up for debugging and loading the broadsheet framebuffer by faking the cmdline.
+    #
+    echo "${_DEV_EINK} ${_CONTROLLER_AUO}" >${_FAKEARGS}
+    _BOOTARGS=${_FAKEARGS}
+    
+    # If requested, use the passed-in orientation, bit-depth, and whether
+    # the orientation is upside down or not.  Also, a single argument,
+    # regardless of its actual value, means we're in flash-update mode.
+    # So, bring things back up quietly.
+    #
+    case $# in
+        1)
+            _START_POWERD=0
+            _SHOW_LOGO=0
+            ;;
+        
+        2)
+            _CONTROLLER_ORIENTATION=$1
+            _CONTROLLER_BPP=$2
+            set_orientation
+            ;;
+
+        3)
+            _CONTROLLER_ORIENTATION=$1
+            _CONTROLLER_BPP=$2
+            _CONTROLLER_UPSIDE_DOWN=$3
+            set_orientation
+            ;;
+            
+        *)
+            ;;
+    esac
+    
+    # Load AUO as though it were coming up from scratch.
+    #
+    load_eink_fb
+}
+
+start_emu()
+{
+    # Stop all video-related activity that's currently running.
+    #
+    stop_video
+    
+    # Set up for debugging and loading the emulated controller by faking the cmdline.
+    #
+    echo "${_DEV_EINK} ${_CONTROLLER_EMULATOR}" >${_FAKEARGS}
+    _BOOTARGS=${_FAKEARGS}
+    
+    # If requested, use the passed-in orientation, size, and bit-depth.
+    #
+    case $# in
+        2)
+            _CONTROLLER_ORIENTATION=$1
+            _CONTROLLER_BPP=$2
+            set_orientation
+            ;;
+            
+        3) 
+            _CONTROLLER_ORIENTATION=$1
+            _CONTROLLER_BPP=$2
+            _CONTROLLER_SIZE=$3
+            set_orientation
+            ;;
+            
+        *)
+            ;;
+    esac
+    
+    # Load the emulated framebuffer as though it were coming up for the first time. 
+    #
+    load_eink_fb
+    
+    # Remove our fake cmdline.
+    #
+    rm -f ${_FAKEARGS}
+}
+
+create_waveform_to_panel_id_access()
+{
+    # Create the eInk HAL's read/write directory if it doesn't already exist.
+    #
+    if [ ! -d ${EINK_RW_DIR} ]; then
+        mkdir -p ${EINK_RW_DIR}
+    fi
+    
+    # Walk through the waveform files in the rootfs if there are any.
+    #
+    if [ $# -gt 0 ]; then
+    
+        # Keep going until we're done with all of the passed-in files.
+        #
+        while [ $# -gt 0 ]; do
+        
+            # Get this waveform file's panel ID.
+            #
+            get_waveform_panel_id "$1"
+           
+            # Create a symbolic link to it in the eInk HAL's read/write
+            # directory for the controller module to find.
+            #
+            # Note:  This will, in effect, override the factory-written
+            #        waveform file with one from the rootfs.
+            #
+            ln -sf "$1" "${EINK_RW_DIR}${WAVEFORM_PANEL_ID}"
+            
+            shift
+        
+        done
+    
+    fi
+}
+
+add_msg_to_usid()
+{
+    _ADD_MSG_LOC=$1
+    
+    # Center the message horizontally, and assume it's to go into the top of the buffer.
+    #
+    _EIPS_X_ADD_MSG=$(( ((${SCREEN_X_RES}/${EIPS_X_RES} - ${#EIPS_USID_MSG})/2 - 1) ))
+    _EIPS_Y_ADD_MSG=1
+    
+    # But put it into the bottom of the buffer if it's supposed to go there instead.
+    #
+    case ${_ADD_MSG_LOC} in
+        bot)
+            _EIPS_Y_ADD_MSG=$(( (${SCREEN_Y_RES}/${EIPS_Y_RES} - 1) ))
+        ;;
+    esac
+
+    ${EIPS} -n ${_EIPS_X_ADD_MSG} ${_EIPS_Y_ADD_MSG} "${EIPS_USID_MSG}"
+}
+
+create_usid_file()
+{
+    # If the rasterized serial number (usid) file doesn't exist (and the
+    # the serial number proc entry does), then go create it now.
+    #
+    if [ ! -f ${EINK_USID_FILE} ] && [ -f ${USID} ]; then
+        
+        # Get the usid into the buffer first, and then add a message to
+        # the very top and very bottom of the buffer.
+        #
+        ${EIPS} -n -r `cat ${USID}`
+        add_msg_to_usid "top"
+        add_msg_to_usid "bot"
+        
+        # Now, dump the rasterized buffer to a file that we can retrieve
+        # later to update the actual screen with.
+        #
+        cat ${SCREEN} >${EINK_USID_FILE}
+    fi
+}
+
+update_waveform()
+{
+    # Don't do anything unless we have waveform files to check against.
+    #
+    if [ $# -gt 0 ]; then
+    
+        # Assume that we won't be flashing anything.
+        #
+        _FLASH=0
+        _DONE=0
+    
+        # Get the controller's current waveform version information.
+        #
+        get_waveform_panel_id
+        _WAVEFORM_EINK_PANELID=${WAVEFORM_PANEL_ID}
+        
+        # Loop through the passed-in waveform files.
+        #
+        while [ $# -gt 0 ] && [ ${_FLASH} -eq 0 ] && [ ${_DONE} -eq 0 ]; do
+            
+            # Get this waveform file's version information.
+            #
+            get_waveform_panel_id "$1"
+            _WAVEFORM_FILE_PANELID=${WAVEFORM_PANEL_ID}
+    
+            # If we found a waveform file whose panel ID matches that of the controller,
+            # say that we want to flash it if its version number is bigger than the
+            # controller's.
+            #
+            if [ "${_WAVEFORM_EINK_PANELID}" = "${_WAVEFORM_FILE_PANELID}" ]; then
+                if [ ${_WAVEFORM_EINK_VERNUM} -lt ${_WAVEFORM_FILE_VERNUM} ]; then
+                    _FLASH=1
+                else
+                    _DONE=1
+                fi
+            fi
+            
+            shift
+    
+        done
+        
+        # Update the waveform if we found a match, forcing the progressbar to 100%
+        # first since we'll be putting up a new screen and rebooting.
+        #
+        if [ ${_FLASH} -eq 1 ]; then
+            set_boot_progress ${_FINISH_STARTUP_PROGRESS}
+            ${_EWU} ${_WAVEFORM_FILE}
+        fi
+    fi
+}
+
+remove_waveform()
+{
+    # Don't do anything unless we have waveform files to remove.
+    #
+    if [ $# -gt 0 ]; then
+        
+        # Mount the rootfs as read/write, delete the waveform(s), and
+        # then remount the rootfs as read-only.
+        #
+        mntroot_rw
+        rm -rf $@
+        
+        mntroot_ro
+    fi
+}
+
+get_eink_commands_version()
+{
+    _COMMANDS_EINK_VERSION="`cat ${_EINK_COMMANDS_VERSION}`"
+}
+
+get_file_commands_version()
+{
+    _COMMANDS_FILE_VERSION="`${_EU} commands ${_COMMANDS_FILE}`"
+}
+
+update_commands()
+{
+    # Ensure that the commands file exists.
+    #
+    if [ -f "${_COMMANDS_FILE}" ]; then
+        
+        # Get both the already-flashed commands version and the version of the commands
+        # we're about to flash.
+        #
+        get_eink_commands_version
+        get_file_commands_version
+        
+        # Only update the commands with the new version if the already-flashed commands
+        # don't match the commands we're about to flash.  Force the progressbar to 100%
+        # since we'll be putting up a new screen and rebooting.
+        #
+        if [ "${_COMMANDS_EINK_VERSION}" != "${_COMMANDS_FILE_VERSION}" ]; then
+            set_boot_progress ${_FINISH_STARTUP_PROGRESS}
+            ${_ECU} ${_COMMANDS_FILE}
+        fi
+    fi
+}
+
+update_flash()
+{
+    # Ensure that the controller is awake before attempting to update its commands
+    # or waveforms.
+    #
+    wake_screen
+    
+    # Update either the commmands or the waveform.
+    #
+    update_commands
+    update_waveform ${_WAVEFORM_FILES}
+    
+    # If we get back here, none of the update waveform files was applicable.  So,
+    # delete them.  (The commands and/or waveform updater functions will reboot
+    # when an update is required.)
+    #
+    remove_waveform ${_WAVEFORM_FILES}
+}
+
+video_halt()
+{
+    # For engineering builds, continue booting even if we couldn't start up the
+    # video subsystem.  But halt on real builds since we'd be doing that
+    # with a "Repair Needed" screen that can't be seen in this case.
+    #
+    if [ ${ENGBUILD} -eq 1 ]; then
+        msg "could not start video, booting anyway" C
+    else
+        msg "could not start video, halting" C
+        halt
+    fi
+}
+
+case "$1" in
+
+    start)
+        # On system start-up, stop any eInk-related activity that might already
+        # be underway.
+        #
+        if [ ${SYSTEM_STARTUP} -ne 0 ] && [ ${VIDEO_STARTUP} -eq 0 ]; then
+            
+            # Preserve the eInk module parameters we need to restore if the eInk HAL is still
+            # up and running before we stop it.
+            #
+            if [ -c ${SCREEN} ]; then
+                _SAVED_SPLASH_SCREEN_UP=`cat ${_SPLASH_SCREEN_UP}`
+            fi
+    
+            stop_eink
+            
+            # Remember that we've done this.
+            #
+            _RCS_FLAGS=`echo $((${RCS_FLAGS}|${RCS_FLAGS_VIDEO_STARTUP}))`
+            echo ${_RCS_FLAGS} >${RCS_FLAGS_CTRL}
+        fi
+        
+        # If the screen doesn't (or no longer) exists, do first things first.
+        #
+        if [ ! -c ${SCREEN} ]; then
+            msg "initializing eInk HAL for system use" I
+            
+            # Don't put up the logo if we're in a low-battery situation.
+            #
+            if [ -f "${LOW_BATT_FILE}" ]; then
+                _SHOW_LOGO=0
+                _LOW_BATT=1
+            fi
+            
+            # Now, do primary load of the eInk HAL.
+            #
+            load_eink_fb_1st
+    
+            # Either put up the low-battery screen or start the boot progress.
+            #
+            rm -f ${EINK_WAKE_FILE}
+    
+            if [ ${_LOW_BATT} -eq 1 ]; then
+                display_lowbat_screen
+            else
+                update_boot_progress "`basename $0`"
+            fi
+       else
+            msg "initializing eInk HAL for rootfs use" I
+            load_eink_fb_2nd
+            
+            create_usid_file
+            start_lifeguard
+                
+            # Only attempt to do updates and such if we're not in a low-battery situation.
+            #
+            if [ ! -f ${EINK_WAKE_FILE} ]; then
+                
+                # Assume that a preflight failure occurred if we can't even find the
+                # preflight failure file.
+                #
+                if [ -f ${_PREFLIGHT_FAILURE} ]; then
+                    preflight_failure=`cat ${_PREFLIGHT_FAILURE}`
+                else
+                    preflight_failure=1
+                fi
+                
+                # Before attempting to flash, ensure that preflighting didn't fail, check to see whether the
+                # flashing proc entry even exists at all, and check to see whether the "dont_update" file
+                # doesn't exist.
+                #
+                if [ ${preflight_failure} -eq 0 ] && ( eink_rom_is_flash ) && [ ! -f ${_DONT_UPDATE_FILE} ]; then
+                    touch ${EINK_UPDATE_FILE}
+                fi
+            fi
+            
+            # Note that we're done with the video start-up process.
+            #
+            update_rcs_info
+            _RCS_FLAGS=`echo $((${RCS_FLAGS}&~${RCS_FLAGS_VIDEO_STARTUP}))`
+            echo ${_RCS_FLAGS} >${RCS_FLAGS_CTRL}
+        fi
+        ;;
+
+    stop)
+        msg "stopping eInk HAL lifeguard" I
+        
+        stop_lifeguard
+        ;;
+        
+    restart|start_all)
+        msg "(re)staring all auto-started video-related activity" I
+        
+        start_video
+        ;;
+        
+    stop_all)
+        msg "stopping all auto-started video-related activity" I
+        
+        stop_video
+        ;;
+
+    start_diags)
+        msg "starting eInk diags" I
+        
+        start_eink_diags
+        ;;
+        
+    stop_diags)
+        msg "stopping eInk diags" I
+        
+        stop_eink_diags
+        ;;
+
+    start_vcom)
+        msg "starting eInk VCOM process" I
+        
+        start_vcom
+        ;;
+        
+    stop_vcom)
+        msg "stopping eInk VCOM process" I
+        
+        stop_vcom
+        ;;
+    
+    start_random_rotate)
+        msg "starting random rotate test" I
+        
+        start_random_rotate
+        ;;
+        
+    stop_random_rotate)
+        msg "stopping random rotate test" I
+        
+        stop_random_rotate
+        ;;
+    
+    start_broads)
+        msg "starting broadsheet" I
+        
+        start_broads $2 $3 $4
+        
+        if [ ! -c ${SCREEN} ] && [ $# -eq 1 ]; then
+            video_halt
+        fi
+        ;;
+
+    start_auo)
+        msg "starting auo" I
+        
+        start_auo $2 $3 $4
+        
+        if [ ! -c ${SCREEN} ] && [ $# -eq 1 ]; then
+            video_halt
+        fi
+        ;;        
+        
+    start_emu)
+        msg "starting emulated framebuffer" I
+        
+        start_emu $2 $3 $4
+        ;;
+    
+    update_flash)
+        msg "updating eink flash" I
+        
+        update_flash
+        ;;
+    
+    *)
+    	msg "Usage: $0 (start|stop|restart|<start|stop>_all|<start|stop>_diags|<start|stop>_vcom|<start|stop>_random_rotate|start_broads|start_auo|start_emu|update_flash)" W
+		exit 1
+        ;;
+
+esac
+

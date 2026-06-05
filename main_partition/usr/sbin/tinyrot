@@ -1,0 +1,285 @@
+#!/bin/sh
+
+##############################################3
+# Copyright 2008 Lab126 Inc
+# Tinyrot script rotates specified files.
+# It copies each log file to the $ARCHIVE_DIR, compreses it,
+# and rotates it.  In addition, it make sure the achieved
+# files to no exceed specified size
+#
+# Conf file /etc/tinyrot.conf has customizable settings
+#
+# file-conf Conf file specifies what files need to be rotated and
+# the max size of files to save for each file
+#
+# Author: saileshr@lab126.com
+##########################################
+
+CONF=/etc/tinyrot.conf
+[ -f $CONF ] && . $CONF
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+UPTIME=`sed -e "s/ [0-9].*//;s/\([0-9]*\)\..*/\1/" < /proc/uptime`
+
+PLAIN_SUFFIX="_??????????????"
+ARCHIVE_SUFFIX=$PLAIN_SUFFIX".gz"
+MESSAGES_LOG="/var/log/messages"
+
+hup_syslog () 
+{
+	/usr/bin/killall -SIGHUP syslog-ng
+}
+
+kill_syslog () 
+{
+	/usr/bin/killall syslog-ng
+}
+
+tmsg ()
+{
+	if [ "x$DEBUG" != "x" ]; then
+	echo $1
+	fi
+}
+
+totalsize () 
+{
+	TOTAL=0
+	tmsg "$0 : Calculating total size ${1}_*.gz"
+	for F in `du ${1}_*${ARCHIVE_SUFFIX} 2>/dev/null | sed 's/\([0-9]*\)\s*.*/\1/g'`; do
+		TOTAL=$(($TOTAL+$F))
+	done
+ 
+	tmsg "$0 : Total size of ${1}_*.gz is ${TOTAL}kb"
+	return $TOTAL
+}
+
+init_aggr()
+{
+	### Check nexttosend and get youngest
+	N0=`cat $NEXT_FILE || echo 0`
+	N1=`cat $1_$YOUNGEST_FILE`
+	if [ ! -e $1_$AGGR_FILE ] || [ -n "${N0}" -a "${N1}" -eq "${N0}" ]; then
+		echo -n $AGGR_COUNT > $1_$AGGR_FILE
+		return 0
+	else
+		T1=`cat $1_$AGGR_FILE`
+		T2=`echo $(($T1-1))`
+		if [ ${T2} -le 1 ]; then
+			rm  $1_$AGGR_FILE
+		else
+			echo -n "$T2" >  $1_$AGGR_FILE
+		fi
+		return 1
+	fi	
+}
+
+# Checks if maximum filesize of youngest rotated log file
+# has been reached.  Returns zero if the youngest rotation
+# file is unknown or maximum filesize has been reached.
+# Returns one if youngest rotated file does not exist or
+# is below filesize max (continue to rotate logs to this file). 
+init_filemaxsize()
+{
+	### check if we have hit filesize max 
+	if [ ! -e $1_$YOUNGEST_FILE ]; then
+		return 0
+	fi	
+
+	YROTATION=`cat $1_$YOUNGEST_FILE`
+        YFILE=$(echo $1_${YROTATION}${ARCHIVE_SUFFIX})
+	if [ ! -e $YFILE ]; then
+		return 1
+	fi
+	FSIZE=`stat -c %s $YFILE`
+	KBSIZE=`expr $FSIZE / 1024`
+	if [ $KBSIZE -ge $FILEMAXSIZE ]; then
+		# we've hit the file size max, so don't aggregate
+		msg ":Max file size hit $FILEMAXSIZE on $YFILE" I
+		return 0
+	else
+		return 1
+	fi 
+}
+
+init_counter()
+{
+	if [ ! -e $1_$OLDEST_FILE ]; then
+		echo -n "00000001" > $1_$OLDEST_FILE
+		echo -n "00000001" > $1_$YOUNGEST_FILE
+		OLDESTROTATION="00000001"
+		YOUNGESTROTATION="00000001"
+	else
+		T1=`cat $1_${YOUNGEST_FILE}|sed 's/[0]*\(.*\)/\1/g'`
+		T2=`echo $((($T1+1)%${MAXROT}))`
+		if [ "x$2" != "xaggr" ]; then
+			YOUNGESTROTATION=`echo $T2 | awk '{ printf "%08d", $1 }'`
+		else 
+			YOUNGESTROTATION=`echo $T1 | awk '{ printf "%08d", $1 }'`
+		fi
+		echo -n "$YOUNGESTROTATION" > $1_$YOUNGEST_FILE
+		OLDESTROTATION=`cat $1_$OLDEST_FILE`
+	fi
+
+}
+
+remove_file()
+{
+	msg "Removing  $1_${OLDESTROTATION}_*.gz to save storage space" I
+	rm -f $1_${OLDESTROTATION}${ARCHIVE_SUFFIX}
+	T1=`echo $OLDESTROTATION|sed 's/[0]*\(.*\)/\1/g'`
+	T2=`echo $((($T1+1)%${MAXROT}))`
+	OLDESTROTATION=`echo $T2 | awk '{ printf "%08d", $1 }'`
+	echo -n "$OLDESTROTATION" > $1_$OLDEST_FILE
+}
+
+AGGR=0
+rotate_file ()
+{
+	msg ":Rotating file $FILE with max size $MAXSIZE" I
+	DESTFILE=$ARCHIVE_DIR/`basename $FILE`
+	if [ ! -e $FILE ]; then                                
+		msg ":No file to rotate: $FILE" I      
+        	return
+	fi      
+	# initialize count-based (AGGR_COUNT) or size-based rotation
+	if [ "x-" = "x${FILEMAXSIZE}" ]; then 	
+		init_aggr $DESTFILE
+	else
+		init_filemaxsize $DESTFILE
+	fi
+	AGGR=$?
+	if [ ${AGGR} != 0 ]; then	
+		init_counter $DESTFILE aggr
+	else
+		init_counter $DESTFILE donotaggr
+        /usr/sbin/loginfo essentials
+	fi
+
+	msg "Moving $FILE to $FILE.0" D
+	# Move the file on the same physical device first
+	# We want to quickly move it, HUP syslog-ng so that
+	# there is no interruption in logging
+	mv $FILE $FILE.0 >/dev/null 2>/dev/null
+	if [ $? != 0 ]; then
+		msg ":Failed to move $FILE to $FILE.0" W
+		return
+	fi
+
+	tmsg "$0 : Signaling syslog"
+
+	if hup_syslog; then
+		WAIT=0
+                # wait until something writes to $MESSAGES_LOG,
+                # don't need to wait for any other files
+		while [ ! -f $MESSAGES_LOG -a $WAIT -lt 10 ]; do
+			sleep 3
+			WAIT=$((WAIT + 1))
+		done
+	else
+		msg "Failed to HUP syslog" W
+		# Last ditch effort, kill syslog
+		kill_syslog
+	fi
+
+	# Name of compressed dest file
+	CDESTFILE=${DESTFILE}_${YOUNGESTROTATION}_`date +%Y%m%d%H%M%S`.gz
+
+	msg ":Compressing $FILE.0 to $CDESTFILE" D
+    # The $(echo ...) turns the glob pattern into a concrete file name.
+    # ${DESTFILE}_${YOUNGESTROTATION}${ARCHIVE_SUFFIX} also matches
+    # ${CDESTFILE}, which we very much do not want to remove.  (We also
+    # don't want zcat to pick it up, resulting in a loop.)
+	YAGGR_FILE=$(echo ${DESTFILE}_${YOUNGESTROTATION}${ARCHIVE_SUFFIX})
+	if [ ${AGGR} != 0 -a -e ${YAGGR_FILE} ]; then
+		zcat ${YAGGR_FILE} | cat - $FILE.0 | gzip > $CDESTFILE && \
+		rm -f ${YAGGR_FILE}
+	else
+		# Copy the file and compress it
+		gzip $FILE.0 -c >$CDESTFILE 2>/dev/null
+	fi
+
+	if [ $? != 0 ]; then
+		msg ":Failed to gzip log file $FILE to $CDESTFILE" W
+		return
+	fi
+
+	msg "Deleting $FILE.0" D
+	# Delete the old file
+	rm -f $FILE.0
+
+	totalsize $DESTFILE
+	TOTAL=$?
+	while [ 1 ]; do
+		if [ $TOTAL -gt $MAXSIZE ]; then
+			# We exceeded max size. remove some files
+			# But keep at least one rotated file
+			NUM_FILES=`ls ${DESTFILE}_*${ARCHIVE_SUFFIX} | wc -l`
+			if [ $NUM_FILES -lt 2 ]; then
+				break
+			fi
+
+			remove_file $DESTFILE
+
+			totalsize $DESTFILE
+			TOTAL=$?
+
+		else
+			break
+		fi
+	done
+}
+
+############## START OF SCRIPT ######################
+
+IFS=`echo -en "\n\b"`
+# Bailing out when kicked off to close to boot time
+if [ $UPTIME -lt $DEADZONE ]; then
+	if ! [ "x$1" = "x--force" ]; then
+		msg ":Still booting - not doing anything until later" W
+		exit 0
+	fi
+fi
+
+(
+uflock -w 60 9
+if [ $? -ne 0 ]; then
+    if [ "x$1" != "x--force" ]; then
+        exit 1
+    else
+        # could potentially end up with a pair of tinyrots killing
+        # each other; still better than two running at once
+        OTHER_TINYROTS=$(ps -o pid h -C sh | grep -v '^ *'$$'$')
+
+        if [ -n "$OTHER_TINYROTS" ]; then
+            msg ":tinyrot --force killing other tinyrots ($OTHER_TINYROTS)" W
+            kill -9 $OTHER_TINYROTS
+        fi
+
+        uflock -w 60 9
+        if [ $? -ne 0 ]; then
+            msg ":tinyrot --force still unable to acquire lock; running anyway" W
+        fi
+    fi
+fi
+
+# Create the destination directory if it doesn't exist
+if [ ! -e $ARCHIVE_DIR ]; then
+	mkdir -p $ARCHIVE_DIR
+fi
+
+while read LINE; do
+	COMMENT=`echo $LINE | sed '/^#/d'`
+	if [ "x$COMMENT" != "x" ]; then
+		FILE=`echo $LINE | sed 's/\(\S*\)\s\(\S*\)\s\(\S*\)/\1/'`
+		MAXSIZE=`echo $LINE | sed 's/\(\S*\)\s\(\S*\)\s\(\S*\)/\2/'`
+		FILEMAXSIZE=`echo $LINE | sed 's/\(\S*\)\s\(\S*\)\s\(\S*\)/\3/'`
+		rotate_file
+	fi
+done < $FILES_CONF
+
+# Sync before exiting
+sync
+) 9> $FLAG_TINYROT_LOCK

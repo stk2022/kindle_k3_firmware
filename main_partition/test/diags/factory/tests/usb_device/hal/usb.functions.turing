@@ -1,0 +1,272 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   usb.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   07/18/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#       Mario platoform USB Device HAL layer for USB Device diagnostic scripts.  
+#       This file defines various HAL definitions used to export and 
+#       unexport the device volume
+#
+#   This file contains a HAL for the Mario platform, which includes:
+#
+#   Global Variables
+#       DEVICE_USER_STORE           - Points to device user store volume
+#       USB_EXPORT_VOLUME           - Points to volume exported by USB
+#       DEVICE_USB_EXPORT_ENTRY     - Points to system export location for
+#                                       specifying export volume
+#       USB_PLUGGED_IN_ENTRY        - Points to sys entry to cat for USB
+#                                       plugged-in information
+#       
+#   Routines
+#       un_export_usb_volumes()         - Unexport the device volume
+#       export_usb_volumes()            - Export the device volume
+#       usb_delete_from_export_volume() - Delete file from USB export volume
+#       usb_copy_to_export_volume()     - Copy file to USB export volume
+#       display_usb_plugin_request()    - Display dialog asking user to plug USB in
+#       do_export_usb_volumes()         - Perform all required to export usb volumes,
+#                                           including displaying dialog
+#       usb_hal_init()                  - Hal initialization routine
+#       usb_hal_exit()                  - Hal teardown routine
+#
+######################################################################
+
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+#
+# Partition to export for export tests
+#
+DEVICE_USB_BASE="/sys/devices/platform/arc_udc/gadget/gadget-lun0"
+export DEVICE_USER_STORE="/dev/mmcblk0p4"
+export USB_EXPORT_VOLUME="/mnt/base-us"
+export USB_EXPORT_EX_VOLUME="/mnt/us"
+export DEVICE_USB_EXPORT_ENTRY="$DEVICE_USB_BASE/file"
+export USB_PLUGGED_IN_ENTRY="/sys/devices/platform/charger/current_limit"
+
+
+
+######################################################################
+# Function:    un_export_usb_volumes
+# Purpose:     Tells the USB driver to un-export the device volume and
+#               then remounts the volume to its mountpoint.
+# Parameters:  none
+# Returns:     none
+# Side Effect: Unexports the exported USB volume
+######################################################################
+un_export_usb_volumes()
+{
+    #  Un-export usb mount drive mode and remount the US volume
+    echo "" > "$DEVICE_USB_EXPORT_ENTRY"
+    sleep 2
+    mount "$USB_EXPORT_VOLUME"
+    vmsg "Unexported $PRODUCT_NAME volume for drive mode test."
+}
+
+
+######################################################################
+# Function:    export_usb_volumes
+# Purpose:     Unmounts the target volume to be exported (mmcblk0p4)
+#               and then tells USB driver to export it.
+# Parameters:  none
+# Returns:     none
+# Side Effect: Exports the USB volume as a mass storage device
+######################################################################
+export_usb_volumes()
+{
+    # Unmount the us volume and then export it to usb mount drive mode
+    umount "$USB_EXPORT_VOLUME"
+    echo "$DEVICE_USER_STORE" > "$DEVICE_USB_EXPORT_ENTRY"
+    vmsg "Exported $PRODUCT_NAME volume for drive mode test."
+}
+
+
+######################################################################
+# Function:     usb_delete_from_export_volume
+# Purpose:      Deletes the file specified by input parameter filename
+#               from the USB volume that gets exported by the
+#               export_usb_volumes()
+# Parameters:   filename - filename (full path) of file to be copied
+# Returns:      failure - inidicates whether file delete failed or not
+#                   0 - file found and deleted OK
+#                   1 - file delete failed - can't find usb export directory
+#                   2 - file delete failed - can't find source file
+######################################################################
+usb_delete_from_export_volume()
+{
+    src_file="$1"
+    target_file="${USB_EXPORT_VOLUME}/${src_file}"
+    if [ -d "$USB_EXPORT_VOLUME" ]; then
+        if [ -f "${target_file}" ]; then
+            echo "Deleted $target_file"
+            rm -rf "$target_file" > /dev/null 2>&1
+            return 0
+        else
+            echo "Error deleting $src_file from $USB_EXPORT_VOLUME."
+            echo "$USB_EXPORT_VOLUME cant be found."
+            return 1
+        fi
+    else
+        echo "Error deleting $src_file from $USB_EXPORT_VOLUME."
+        echo "$target_file cant be found."
+        return 2
+    fi
+
+}
+
+######################################################################
+# Function:     usb_copy_to_export_volume
+# Purpose:      Copies the file specified by input parameter filename
+#               to the volume that gets exported by the export_usb_volumes()
+#               call.
+# Parameters:   filename - filename (full path) of file to be copied
+#               dst_file - if present, destination filename
+#                           if not present, source filename is used for
+#                           destination filename.
+# Returns:      failure - inidicates whether file copy failed or not
+#                   0 - file copied OK
+#                   1 - file copy failed - can't find usb export directory
+#                   2 - file copy failed - can't find source file
+######################################################################
+usb_copy_to_export_volume()
+{
+    src_file="$1"
+    if [ $# -eq 2 ]; then
+        dst_file="$2"
+    else
+        dst_file="$src_file"
+    fi
+
+    if [ -f "$src_file" ] || [ -d "$src_file" ]; then
+        if [ -d "$USB_EXPORT_VOLUME" ]; then
+            cp -ar "$src_file" "${USB_EXPORT_VOLUME}/${dst_file}" > /dev/null 2>&1
+            return 0
+        else
+            echo "Error copying $src_file to $USB_EXPORT_VOLUME."
+            echo "$USB_EXPORT_VOLUME cant be found."
+            return 1
+        fi
+    else
+        echo "Error copying $src_file to $USB_EXPORT_VOLUME."
+        echo "$src_file cant be found."
+        return 2
+    fi
+}
+
+
+######################################################################
+# Function:	display_usb_plugin_request
+# Purpose:	Displays a dialog telling user to plug in USB cable.
+#		Waits for user to hit success key to continue.
+# Parameters:	name - name of test to print in banner of message
+#		device - name of device to connect the Kindle to,
+#		  	typically either "PC" or "wall charger"
+# Returns:	none
+######################################################################
+display_usb_plugin_request ()
+{
+    clear_screen
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 10 4 "$1"
+    ${DOUT} -n 8 5 "$base"
+    ${DOUT} -n 2 7 "Using a USB cable, connect the device to a"
+    center_text "$2" 8 "$base"
+    ${DOUT} -n $? 9 "$2"
+    ${DOUT} 2 11 "Once connected, press $SUCCESS_KEY_LABEL to continue..."
+
+    # wait for any key
+    wait_for_key $SUCCESS_KEY
+}
+
+
+######################################################################
+# Function:    is_usb_plugged_in
+# Purpose:     Return whether the USB cable is connected or not
+# Parameters:  none
+# Returns:     0 - USB not connected
+#              1 - USB connected
+# Assumptions: On Mario, we're plugged in if we've got a charge going
+######################################################################
+is_usb_plugged_in()
+{
+    # If the USB cable is not plugged in, ask user to do it
+    USB_PLUGGED_IN=`cat $USB_PLUGGED_IN_ENTRY`
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ] || [ $USB_PLUGGED_IN -eq 0 ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+
+######################################################################
+# Function:     do_export_usb_volumes
+# Purpose:      Exports a usb volume as a mass storage device.
+#               First checks to see if USB cable is plugged in.  If not,
+#               this displays a dialog telling user to plug in USB cable,
+#               waits for user to hit success key to continue,
+#               then exports device volumes as mass storage devices
+#               over USB
+# Parameters:   name - name of test to print in banner of message
+# Returns:      none
+# Assumptions:  USB plug status is detected by checking current limit
+#               and if it's non-zero, we're hooked up to "something".
+#               That's the best method we have right now....
+# Side Effect:  Volume is unmounted locally and exported as mass storage
+#               device.
+######################################################################
+do_export_usb_volumes()
+{
+    # If the USB cable is not plugged in, ask user to do it
+    is_usb_plugged_in
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        # Ask user to plug it in
+        display_usb_plugin_request "$1"
+    fi
+
+    # Export the volume over USB
+    vmsg "Exporting USB volumes..."
+    export_usb_volumes
+}
+
+
+######################################################################
+# Function:    usb_hal_init
+# Purpose:     Initialization code for the usb device hal layer
+# Parameters:  none
+# Returns:     none
+######################################################################
+usb_hal_init()
+{
+    #
+    # Nothing to initialize for USB hal init
+    #
+    vmsg "usb_hal_init()"
+}
+
+
+######################################################################
+# Function:    usb_hal_exit
+# Purpose:     Cleanup / exit code for the usb device hal layer
+# Parameters:  none
+# Returns:     none
+######################################################################
+usb_hal_exit()
+{
+    #
+    # Nothing to uninitialize for USB hal init
+    #
+    vmsg "usb_hal_exit()"
+}

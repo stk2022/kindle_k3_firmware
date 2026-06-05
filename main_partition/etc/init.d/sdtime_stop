@@ -1,0 +1,26 @@
+#!/bin/sh
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+ID="sdtime"
+MSG="shutdown time in milliseconds" 
+
+case "$1" in
+	start|stop)
+		T_NOW=$(cat /proc/uptime | sed 's/ .*/000/ ; s/\.\(...\).*/\1/')
+		T_START=$(cat /var/tmp/sdtime_start)
+		if [ ! -z "$T_START" ]; then
+			msg "time=$((T_NOW-T_START)):$MSG" I "$ID"
+		else
+			msg ":$MSG has not been requested" W "Err_$ID"
+		fi
+		;;
+	restart|reload|force-reload)
+		msg "argument '$1' not supported" W
+		exit 3
+		;;
+	*)
+		msg "Usage: $0 {start|stop}" W
+		exit 1
+		;;
+esac

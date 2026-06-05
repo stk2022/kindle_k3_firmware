@@ -1,0 +1,117 @@
+#!/bin/sh
+
+# This script contains the misc tasks we have to perform after the system 
+# finished booting.  This script is divided into two parts
+# Before framework start: This portion executes as soon as the system booted
+# enough to start the framework
+# After framework start: This will portion will execute after framework finishes
+# booting and shows the home screen.
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EIPUTS=/usr/sbin/eiputs
+[ -f ${_EIPUTS} ] && . ${_EIPUTS}
+
+_FRAMEWORK_SOURCE=com.lab126.framework
+_FRAMEWORK_BOOTED_EVENT=FrameworkStarted
+_USB_FS_ONLINE=/sys/bus/platform/devices/arc_udc/gadget/gadget-lun0/online
+_PROC_KEYPAD=/proc/keypad
+_PROC_FIVEWAY=/proc/fiveway
+_PROC_ACCELEROMETER=/proc/accelerometer
+_LOCK_INPUT=lock
+_POWERD_TARGET=com.lab126.powerd
+_POWERD_WAKEUP_PROP=wakeUp
+
+_FINISH_STARTUP_PROGRESS=100
+_LOGO_SCREEN=5
+
+clear_screen()
+{
+    ${EIPS} -c
+}
+
+logo_screen()
+{
+    ${EIPS} -s ${_LOGO_SCREEN}
+}
+
+before_framework_start() {
+    
+    _t_fw=$(sed -e 's/ .*/000/ ; s/\.\(...\).*/\1/' < /proc/uptime ) 
+    msg "time=$_t_fw:boot time before framework starts, in milliseconds" I "symboot"
+
+    # No Framework!  Put up message to that effect
+    if [ ! -f ${START_FRAMEWORK} ]; then
+        set_boot_progress ${_FINISH_STARTUP_PROGRESS}
+        sleep 1
+        
+        clear_screen
+        logo_screen
+        
+        puts_init
+        puts -b "~~~~ limited build ~~~~"
+        puts -b
+        puts -b " reboot into recovery-util..."
+        puts    " ...to install a full build"
+    fi
+}
+
+after_framework_start() {
+
+    _t_fw=$(sed -e 's/ .*/000/ ; s/\.\(...\).*/\1/' < /proc/uptime ) 
+    msg "time=$_t_fw:boot time after framework starts, in milliseconds" I "fwboot"
+
+    # originally /usr/sbin/loginfo is in /etc/rcS.d/S20syslog-ng
+    # but fail to run since dbus/lipc is not ready yet
+    /usr/sbin/loginfo essentials --force
+
+    # Make sure we're not in screensaver on system startup
+    lipc-set-prop ${_POWERD_TARGET} ${_POWERD_WAKEUP_PROP} 1
+
+    # Move setting the governor here
+    /etc/init.d/ckimage start
+    /etc/init.d/governor start
+    ${TINYROT} --force
+
+    sleep 1
+
+    if [ -e /mnt/us/ENABLE_AUTOTEST ]; then 
+        if [ -e /test/unit_tests/stal/stal ]; then
+            /test/unit_tests/stal/stal &
+        fi
+    fi
+    
+    return 0
+}
+
+start() {
+    if [ -f ${START_FRAMEWORK} ]; then 
+        # Wait for framework to finish booting
+        lipc-wait-event ${_FRAMEWORK_SOURCE} ${_FRAMEWORK_BOOTED_EVENT}
+        msg "Boot finished script received framework booted event" I
+        
+        after_framework_start
+    fi
+}
+
+# START OF SCRIPT
+case "$1" in
+
+    start)
+        msg "Boot finished script running" I
+        before_framework_start
+        start &
+        ;;
+
+    stop|restart|reload|force-reload)
+        echo "argument '$1' not supported" W
+        exit 3
+        ;;
+    *)
+        msg "Usage: $0 start" W
+        exit 1
+        ;;
+
+esac
+

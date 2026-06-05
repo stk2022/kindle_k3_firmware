@@ -1,0 +1,38 @@
+#!/bin/sh 
+
+_FUNCTIONS=/etc/rc.d/functions
+NAME="pre-wifid"
+LOAD_AR6k_CMD="/etc/init.d/wifi"
+LOAD_WPAS_CMD="/etc/init.d/wpa_supplicant start"
+UNLOAD_AR6k_CMD="/etc/init.d/wifi stop"
+UNLOAD_WPAS_CMD="/etc/init.d/wpa_supplicant stop"
+
+WIFIOFF_FILE=/mnt/us/WIFIOFF
+
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+if [ -e $WIFIOFF_FILE ]; then
+  msg "WiFi driver disabled" I
+  exit 1
+fi
+
+case "$1" in
+
+   start)
+        $LOAD_AR6k_CMD
+        sleep 1
+        $LOAD_WPAS_CMD
+        ;;
+
+   stop)
+        $UNLOAD_WPAS_CMD
+        $UNLOAD_AR6k_CMD
+        ;;
+    *)
+        msg "Usage: /etc/init.d/$NAME {start|stop}" W >&2
+        exit 1
+        ;;
+esac
+
+exit 0
+

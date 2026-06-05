@@ -1,0 +1,45 @@
+#!/bin/sh
+
+. /etc/rc.d/functions
+
+cd "$1"
+
+local _RES_FILE=/tmp/flash-result.$$
+
+display_update_screen_initial
+
+msg "beginning update process" I "bup"
+
+WAKEUP_ENABLE=/sys/devices/platform/fsl-ehci.0/wakeup_enable
+WAKEUP_ENABLE_PREV=`cat ${WAKEUP_ENABLE} | xargs`
+
+echo 0 >${WAKEUP_ENABLE}
+
+LD_PRELOAD='/usr/lib/libunbufso.so' ./dtp_download_proc dtp600w 0 /dev/tts/USB0 /dev/tts/USB1 | tsl | ./display_progress 0 ${_RES_FILE} ${EINK_PROGRESSBAR_CTRL}
+
+local _RET=`cat ${_RES_FILE}`
+if [ "${_RET}" = "0" ]; then
+	msg "update process complete" I "upc"
+
+	display_update_screen_success
+
+else
+	msg "update process failure" E "upf"
+
+	display_update_screen_failure_no_wait
+
+	_RET=1
+fi
+
+rm ${_RES_FILE}
+
+cd - >/dev/null
+
+sleep 2
+
+echo ${WAKEUP_ENABLE_PREV} >${WAKEUP_ENABLE}
+
+display_logo_screen
+
+return ${_RET}
+

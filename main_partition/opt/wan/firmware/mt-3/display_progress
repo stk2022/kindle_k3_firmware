@@ -1,0 +1,35 @@
+#!/bin/sh
+
+awk -v start_percent=$1 -v result_file=$2 -v progress_bar=$3 '
+
+BEGIN {
+	FS = " "
+
+	res = 0
+
+	cur_percent = ""
+
+	percent_scale = (100 - start_percent) / 100
+
+	while (getline > 0) {
+
+		if ($1 == "STAGE3:" && $2 == "Write") {
+			# percentage format "STAGE3: Write n% Done"
+
+			val = $3
+			sub(/%/, "", val)
+
+			print (int(val * percent_scale) + start_percent) >progress_bar
+
+		} else if ($1 == "DLOAD:" && $2 == "Failed") {
+			# update process failed
+			res = 1
+
+		}
+
+	}
+
+	print res >result_file
+}
+'
+

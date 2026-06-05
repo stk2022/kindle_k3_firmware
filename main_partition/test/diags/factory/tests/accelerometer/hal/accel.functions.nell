@@ -1,0 +1,644 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   accel.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   09/10/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Contains hal layer for the accelerometer on a Mario platform.
+#
+#   Data Structures
+#       ACCEL_ORIENTATION_LIST  - list of orientation/positions to test
+#
+#   Constants
+#       ORIENTATION_UNKNOWN     - Unknown response / orientation
+#       ORIENTATION_LEFT        - Device oriented left
+#       ORIENTATION_RIGHT       - Device oriented right
+#       ORIENTATION_UP          - Device oriented up
+#       ORIENTATION_DOWN        - Device oriented down
+#       ORIENTATION_FACE_UP     - Device oriented face up
+#       ORIENTATION_FACE_DOWN   - Device oriented face down
+#       ORIENTATION_FREE_FALL   - Device free falling
+#
+#   Hal Routines
+#       accel_position_to_label(pos)    - Given a position constant, return string name
+#       accel_orientation()             - Return the device orientation
+#       accel_test_orientation()        - Drive operator through accelerometer orientation test
+#       accel_hal_init(void)            - Hal initialization routine
+#       accel_hal_exit(void)            - Hal teardown routine
+#
+######################################################################
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+# Keyboard HAL
+[ -f ${_KEYBOARD_HAL_FUNCTIONS} ] && . ${_KEYBOARD_HAL_FUNCTIONS}
+
+
+#
+# Image files for orientation direction
+#
+LEFT_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/Left.png"
+RIGHT_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/Right.png"
+UP_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/Up.png"
+DOWN_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/Down.png"
+FACE_UP_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/FaceUp.png"
+FACE_DOWN_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/FaceDown.png"
+STARTING_FACE_UP_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/StartingFaceUp.png"
+STARTING_UP_ACCELEROMETER_IMAGE="$ACCEL_IMAGES_ROOT/StartingUp.png"
+
+
+#
+# Orientation Constants
+#
+ORIENTATION_UNKNOWN=0
+ORIENTATION_LEFT=1
+ORIENTATION_RIGHT=2
+ORIENTATION_UP=3
+ORIENTATION_DOWN=4
+ORIENTATION_FACE_UP=5
+ORIENTATION_FACE_DOWN=6
+ORIENTATION_FREE_FALL=7
+
+
+#
+# List of orientations to test
+#
+export ACCEL_ORIENTATION_START_D1="$ORIENTATION_UP"
+export ACCEL_ORIENTATION_LIST_D1="$ORIENTATION_RIGHT $ORIENTATION_DOWN $ORIENTATION_LEFT $ORIENTATION_UP"
+
+export ACCEL_ORIENTATION_START_D2="$ORIENTATION_FACE_UP"
+export ACCEL_ORIENTATION_LIST_D2="$ORIENTATION_FACE_DOWN $ORIENTATION_FACE_UP"
+
+
+# Timeout to wait for user cancel in mSec
+ACCEL_CANCEL_TIMEOUT=1000
+
+# Entry for querying the accelerometer
+export ACCELEROMETER_ENTRY="/proc/accelerometer"
+
+
+######################################################################
+# Function:     accel_display_screen
+# Purpose:      Display the screen to let the user know which device
+#               orientation we want
+# Paramters:    Device orientation:
+#                   ORIENTATION_LEFT
+#                   ORIENTATION_RIGHT
+#                   ORIENTATION_UP
+#                   ORIENTATION_DOWN
+#                   ORIENTATION_FACE_UP
+#                   ORIENTATION_FACE_DOWN
+#                   ORIENTATION_FREE_FALL
+#                   ORIENTATION_UNKNOWN
+# Returns:      0 - Image displayed properly
+#               1 - Unsupported orientation
+#               2 - Orientation image file is missing
+# Side Effect:  Displays image on the screen
+######################################################################
+accel_display_screen()
+{
+    case "$1" in
+        $ORIENTATION_LEFT)
+            _orientation_image="$LEFT_ACCELEROMETER_IMAGE"
+            ;;
+        $ORIENTATION_RIGHT)
+            _orientation_image="$RIGHT_ACCELEROMETER_IMAGE"
+            echo "Right"
+            ;;
+        $ORIENTATION_UP)
+            _orientation_image="$UP_ACCELEROMETER_IMAGE"
+            echo "Up"
+            ;;
+        $ORIENTATION_DOWN)
+            _orientation_image="$DOWN_ACCELEROMETER_IMAGE"
+            echo "Down"
+            ;;
+        $ORIENTATION_FACE_UP)
+            _orientation_image="$FACE_UP_ACCELEROMETER_IMAGE"
+            echo "Face Up"
+            ;;
+        $ORIENTATION_FACE_DOWN)
+            _orientation_image="$FACE_DOWN_ACCELEROMETER_IMAGE"
+            echo "Face Down"
+            ;;
+        $ORIENTATION_FREE_FALL)
+            echo "Free Fall is not a supported orientation"
+            return 1
+            ;;
+        $ORIENTATION_UNKNOWN|*)
+            echo "Unknown orientation $1"
+            return 1
+            ;;
+    esac
+
+    # If the file isn't there, complain now and return
+    if ! [ -f $_orientation_image ]; then
+        echo "ERROR - Can't find image file $_orientation_image"
+        return 2;
+    fi
+
+    # Display the image on the screen
+    # ${EIPS} -n -b 0 0 ${_orientation_image}
+    ${EIPS} -g ${_orientation_image}
+}
+
+
+######################################################################
+# Function:     accel_position_to_label
+# Purpose:      Return text for the given device orientation
+# Paramters:    Device orientation to translate to english.
+#               One of the following:
+#                   ORIENTATION_LEFT
+#                   ORIENTATION_RIGHT
+#                   ORIENTATION_UP
+#                   ORIENTATION_DOWN
+#                   ORIENTATION_FACE_UP
+#                   ORIENTATION_FACE_DOWN
+#                   ORIENTATION_FREE_FALL
+#                   ORIENTATION_UNKNOWN
+# Returns:      Text string in english representing orientation
+######################################################################
+accel_position_to_label()
+{
+    case "$1" in
+        $ORIENTATION_LEFT)
+            echo "Left"
+            ;;
+        $ORIENTATION_RIGHT)
+            echo "Right"
+            ;;
+        $ORIENTATION_UP)
+            echo "Up"
+            ;;
+        $ORIENTATION_DOWN)
+            echo "Down"
+            ;;
+        $ORIENTATION_FACE_UP)
+            echo "Face Up"
+            ;;
+        $ORIENTATION_FACE_DOWN)
+            echo "Face Down"
+            ;;
+        $ORIENTATION_FREE_FALL)
+            echo "Free Fall"
+            ;;
+        $ORIENTATION_UNKNOWN|*)
+            echo "Unknown"
+            ;;
+    esac
+}
+
+accel_get_orientation()
+{
+    cat "$ACCELEROMETER_ENTRY"
+}
+
+######################################################################
+# Function:     accel_orientation
+# Purpose:      Return the device orientation read from accelerometer
+#               driver.
+# Paramters:    none
+# Returns:      One of the following:
+#                   ORIENTATION_LEFT
+#                   ORIENTATION_RIGHT
+#                   ORIENTATION_UP
+#                   ORIENTATION_DOWN
+#                   ORIENTATION_FACE_UP
+#                   ORIENTATION_FACE_DOWN
+#                   ORIENTATION_FREE_FALL
+#                   ORIENTATION_UNKNOWN
+######################################################################
+accel_orientation()
+{
+    raw_orientation=`accel_get_orientation`
+    vmsg "Accelerometer driver returned $raw_orientation"
+    case "$raw_orientation" in
+        orientationUp)
+            orientation=$ORIENTATION_UP
+            ;;
+        orientationDown)
+            orientation=$ORIENTATION_DOWN
+            ;;
+        orientationLeft)
+            orientation=$ORIENTATION_LEFT
+            ;;
+        orientationRight)
+            orientation=$ORIENTATION_RIGHT
+            ;;
+        orientationFaceUp)
+            orientation=$ORIENTATION_FACE_UP
+            ;;
+        orientationFaceDown)
+            orientation=$ORIENTATION_FACE_DOWN
+            ;;
+        orientationFreeFall)
+            orientation=$ORIENTATION_FREE_FALL
+            ;;
+        *)
+            orientation=$ORIENTATION_UNKNOWN
+            ;;
+    esac
+    return $orientation
+}
+
+
+######################################################################
+# Function:     accel_test_orientation
+# Purpose:      Given an orientation to test, instruct the user to
+#               put the device into that orientation and then verify
+#               that the device sees it.
+# Paramters:    Orientation to test.
+#               One of the following:
+#                   ORIENTATION_LEFT
+#                   ORIENTATION_RIGHT
+#                   ORIENTATION_UP
+#                   ORIENTATION_DOWN
+#                   ORIENTATION_FACE_UP
+#                   ORIENTATION_FACE_DOWN
+#                   ORIENTATION_FREE_FALL
+# Returns:      0 - passed
+#               1 - failed
+######################################################################
+accel_test_position()
+{
+    accel_test_position="$1"
+    direction=`accel_position_to_label $accel_test_position`
+
+    #
+    # Print the button-specific portion of the banner
+    #
+    clear_screen
+    accel_display_screen $accel_test_position
+    do_local_echo "Turn the device $direction."
+    do_local_echo "Press $EXIT_KEY_LABEL if you turned the device $direction but this screen did not change."
+
+    #
+    # Go look for the button pressed and released
+    #
+    ACCEL_DIAG_RESULT=1
+    DONE=0;
+    while [ $DONE -eq 0 ]; do
+        accel_orientation
+        orientation=$?
+        if [ $orientation -eq $accel_test_position ]; then
+            success "$direction Accelerometer Diagnostic"
+            ACCEL_DIAG_RESULT=0
+            DONE=1
+        else
+            # Look for a cancel button
+            KEY=`$GET_KEYBOARD_INPUT ${ACCEL_CANCEL_TIMEOUT}`
+            RETVAL=$?
+            if [ $RETVAL -eq 0 ]; then
+                # Process key request
+                case "$KEY" in
+                    $EXIT_KEY)
+                        failure "$direction Accelerometer Diagnostic"
+                        ACCEL_DIAG_RESULT=1
+                        DONE=1
+                        CANCEL=1
+                        ;;
+                    *)
+                        vmsg "Wrong key $Key pressed"
+                        ;;
+                esac
+            else
+                vmsg "Key not found - timed out"
+            fi
+
+        fi
+    done
+
+    # Erase the lines we used....
+    erase_line 8
+    erase_line 15
+    erase_line 17
+
+    return $ACCEL_DIAG_RESULT
+}
+
+
+######################################################################
+# Function:     accel_get_x_offset
+# Purpose:      Get the current accelerometer x offset used for initial
+#               boot calibration
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets ACCEL_X_OFFSET global
+######################################################################
+accel_get_x_offset()
+{
+    # If the string shown has junk, initialize your 3 offset variables to zero. 
+    let ACCEL_X_OFFSET=`idme ? | grep  accel |sed 's/accelerometer offset string = \([-0-9]*\),\([-0-9]*\),\([-0-9]*\)/\1/g'` > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        ACCEL_X_OFFSET=0
+    fi
+    export ACCEL_X_OFFSET
+}
+
+
+######################################################################
+# Function:     accel_get_y_offset
+# Purpose:      Get the current accelerometer y offset used for initial
+#               boot calibration
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets ACCEL_Y_OFFSET global
+######################################################################
+accel_get_y_offset()
+{
+    # If the string shown has junk, initialize your 3 offset variables to zero. 
+    let ACCEL_Y_OFFSET=`idme ? | grep  accel |sed 's/accelerometer offset string = \([-0-9]*\),\([-0-9]*\),\([-0-9]*\)/\2/g'` > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        ACCEL_Y_OFFSET=0
+    fi
+    export ACCEL_Y_OFFSET
+}
+
+
+######################################################################
+# Function:     accel_get_z_offset
+# Purpose:      Get the current accelerometer z offset used for initial
+#               boot calibration
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets ACCEL_Z_OFFSET global
+######################################################################
+accel_get_z_offset()
+{
+    # If the string shown has junk, initialize your 3 offset variables to zero. 
+    let ACCEL_Z_OFFSET=`idme ? | grep  accel |sed 's/accelerometer offset string = \([-0-9]*\),\([-0-9]*\),\([-0-9]*\)/\3/g'` > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        ACCEL_Z_OFFSET=0
+    fi
+    export ACCEL_Z_OFFSET
+}
+
+
+######################################################################
+# Function:     accel_do_get_average_offsets
+# Purpose:      Go calculate the accelerometer reading average over a
+#               5 second period.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets ACCEL_X_AVERAGE, ACCEL_Y_AVERAGE, ACCEL_Z_AVERAGE
+######################################################################
+accel_do_get_average_offsets()
+{
+    accel_get_average_offsets 5
+}
+
+
+######################################################################
+# Function:     accel_start_averaging
+# Purpose:      Tell accelerometer driver to start sampling accelerometer
+#               data
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Starts accelerometer driver sampling 
+######################################################################
+accel_start_averaging()
+{
+    echo "xyz_start" > /proc/accelerometer
+}
+
+
+######################################################################
+# Function:     accel_stop_averaging
+# Purpose:      Tell accelerometer driver to stop sampling and to 
+#               calculate an average of the samples taken.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Stops accelerometer driver from sampling and causes it
+#               to output the averave of those samples to the messages
+#               file.
+######################################################################
+accel_stop_averaging()
+{
+    echo "xyz_end" > /proc/accelerometer
+}
+
+
+######################################################################
+# Function:     accel_post_averaging_get_averages
+# Purpose:      Parse the messages file to grab the averages value just
+#               logged by the accelerometer driver
+# Paramters:    count - # of lines at end of messages file to search
+# Returns:      none
+# Side Effect:  Sets ACCEL_X_AVERAGE, ACCEL_Y_AVERAGE, ACCEL_Z_AVERAGE
+######################################################################
+accel_post_averaging_get_averages()
+{
+    let ACCEL_X_AVERAGE=`grep "xyz_rounded" /var/log/messages | tail -1 | sed 's/.*rounded averages = \([-0-9]*\),[-0-9]*,[-0-9]*/\1/g'`
+    let ACCEL_Y_AVERAGE=`grep "xyz_rounded" /var/log/messages | tail -1 | sed 's/.*rounded averages = [-0-9]*,\([-0-9]*\),[-0-9]*/\1/g'`
+    let ACCEL_Z_AVERAGE=`grep "xyz_rounded" /var/log/messages | tail -1 | sed 's/.*rounded averages = [-0-9]*,[-0-9]*,\([-0-9]*\)/\1/g'`
+    export ACCEL_X_AVERAGE
+    export ACCEL_Y_AVERAGE
+    export ACCEL_Z_AVERAGE
+}
+
+
+######################################################################
+# Function:     accel_get_average_offsets
+# Purpose:      Go calculate the accelerometer reading average over a
+#               caller-specified second period.
+# Paramters:    seconds - seconds to take sample for
+# Returns:      none
+# Side Effect:  Sets ACCEL_X_AVERAGE, ACCEL_Y_AVERAGE, ACCEL_Z_AVERAGE
+######################################################################
+accel_get_average_offsets()
+{
+    accel_start_averaging
+    sleep $1
+    accel_stop_averaging
+    sleep 2
+    accel_post_averaging_get_averages 5
+}
+
+
+######################################################################
+# Function:     accel_do_get_offsets
+# Purpose:      Grab up the x, y, and z accelerometer offset values 
+#               from NOR
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets ACCEL_X_OFFSET, ACCEL_Y_OFFSET, ACCEL_Z_OFFSET
+######################################################################
+accel_do_get_offsets()
+{
+    accel_get_x_offset
+    accel_get_y_offset
+    accel_get_z_offset
+}
+
+
+######################################################################
+# Function:     accel_range_check
+# Purpose:      Compare the average values read with the values expected
+#               of a calibrated device and return pass/fail result
+# Paramters:    none
+# Returns:      0 - Device needs calibrating
+#               1 - Device is within range, no calibration needed
+######################################################################
+accel_range_check()
+{
+    # If any are out of range, return 0 failure status
+    if  ([ $ACCEL_X_AVERAGE -gt 1 ] || [ $ACCEL_X_AVERAGE -lt -1 ]) ||
+        ([ $ACCEL_Y_AVERAGE -gt 1 ] || [ $ACCEL_Y_AVERAGE -lt -1 ]) ||
+        ([ $ACCEL_Z_AVERAGE -gt -20 ] || [ $ACCEL_Z_AVERAGE -lt -22 ]); then
+        return 0
+    fi
+    return 1
+}
+
+
+######################################################################
+# Function:     accel_do_calibrate
+# Purpose:      Calibrate the accelerometer and store calibration values
+#               to NOR flash for use by accelerometer driver on subsequent 
+#               boots
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets ACCEL_X_OFFSET, ACCEL_Y_OFFSET, ACCEL_Z_OFFSET
+#               Sets ACCEL_X_AVERAGE, ACCEL_Y_AVERAGE, ACCEL_Z_AVERAGE
+######################################################################
+accel_do_calibrate()
+{
+    # 1) Tell operator to make sure the device is flat, face up (on a table, 
+    # or fixture, whatever is decided), then press a key; we need to make sure 
+    # that the device is as close to "flat" as possible. 
+    clear_screen
+    banner="Accelerometer Calibration"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 5 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 5 5 "$base"
+    ${DOUT} -n 5 7 "Place device on a flat surface, face up."
+    ${DOUT} -n 5 11 "Press $SUCCESS_KEY_LABEL to start calibration process."
+    ${DOUT} 5 13 "Press $EXIT_KEY_LABEL to cancel calibration process."
+    DONE=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                DONE=1
+                ;;
+            $EXIT_KEY)
+                return -1
+                ;;
+            *)
+                ;;
+        esac
+    done
+    
+
+    # Tell user we're calibrating
+    erase_line 7
+    erase_line 11
+    erase_line 13
+    ${DOUT} 5 7 "Calibrating device accelerometer...."
+
+
+    # 2) Obtain any pre-programmed offsets from NOR, as follows: 
+    accel_do_get_offsets
+
+    # we just loaded globals ACCEL_X_OFFSET, ACCEL_Y_OFFSET, ACCEL_Z_OFFSET
+
+    # echo " "
+    # echo "Offsets read as $ACCEL_X_OFFSET, $ACCEL_Y_OFFSET, $ACCEL_Z_OFFSET"
+    # echo " "
+
+
+    # 3) Obtain average x,y, and z measurements
+    # delta_z = round (z_average + 21.3) = round (-24.1 + 21.3) = round (-2.8) = -3 
+    # NOTE 2: We need to add 21.3 to the z average because, when flat and face up, z 
+    # should read -1g, which in Tron corresponds to an average of -21.3 counts. 
+    accel_do_get_average_offsets
+
+    # just loaded ACCEL_X_AVERAGE, ACCEL_Y_AVERAGE, ACCEL_Z_AVERAGE
+    # echo "Averages read as $ACCEL_X_AVERAGE, $ACCEL_Y_AVERAGE, $ACCEL_Z_AVERAGE"
+    # echo " "
+
+    # Calibrate it now...
+    # 6) Write the delta values to the accelerometer: 
+    # echo "calibrate $delta_x,$delta_y,$delta_z" > /proc/accelerometer 
+    # NOTE: no spaces between values and commas. 
+    # In our example: 
+    let NEW_ACCEL_Z_AVG=$ACCEL_Z_AVERAGE+21
+    echo "calibrate $ACCEL_X_AVERAGE,$ACCEL_Y_AVERAGE,$NEW_ACCEL_Z_AVG"
+    echo " "
+    echo "calibrate $ACCEL_X_AVERAGE,$ACCEL_Y_AVERAGE,$NEW_ACCEL_Z_AVG" > /proc/accelerometer 
+
+
+    # 7) Compute the new offset values: 
+    # new_x_offset = x_offset + delta_x = -3 + (-2) = -5 
+    # new_y_offset = y_offset + delta_y = -3 + 0 = -3 
+    # new_z_offset = z_offset + delta_z + 21 = -1 + (-3) = -4 
+    let NEW_X_OFFSET=$ACCEL_X_OFFSET+$ACCEL_X_AVERAGE
+    let NEW_Y_OFFSET=$ACCEL_Y_OFFSET+$ACCEL_Y_AVERAGE
+    let NEW_Z_OFFSET=$ACCEL_Z_OFFSET+$NEW_ACCEL_Z_AVG
+    # echo "New offsets calced as $NEW_X_OFFSET,$NEW_Y_OFFSET,$NEW_Z_OFFSET"
+    # echo " "
+
+    # 8) Write the new offset values to NOR for auto-calibration at every boot afterwards: 
+    # idme --accel "$new_x_offset,$new_y_ofset,$new_z_offset " 
+    # NOTE: string passed to accelerometer must have spaces (nothing else) appended at the end, 
+    # enough to total 16 characters. 
+    idme --accel "$NEW_X_OFFSET,$NEW_Y_OFFSET,$NEW_Z_OFFSET "
+
+
+    # 9) Re-run the command from step (3) above to verify that the new average values are close 
+    # (+/- 1 count should be OK) to: 
+    # x_average = 0 
+    # y_average = 0 
+    # z_average = -21.3 
+    accel_get_average_offsets 3
+    echo "Should be  : 0, 0, -21,  Actually is: $ACCEL_X_AVERAGE, $ACCEL_Y_AVERAGE, $ACCEL_Z_AVERAGE"
+    echo " "
+}
+
+
+######################################################################
+# Function:     accel_hal_init
+# Purpose:      Hal initialization routine for accelerometer.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      0 - No Errors
+#               1 - Accelerometer proc entry is not there
+######################################################################
+accel_hal_init()
+{
+    #
+    # Make sure accelerometer entry is there
+    #
+    vmsg "accel_hal_init()"
+    if ! [ -f "$ACCELEROMETER_ENTRY" ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+
+######################################################################
+# Function:     accel_hal_exit
+# Purpose:      Hal cleanup exit routine for accelerometer.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+accel_hal_exit()
+{
+    #
+    # Nothing to uninitialize for accelerometer
+    #
+    vmsg "accel_hal_exit()"
+}

@@ -1,0 +1,47 @@
+#!/bin/sh
+
+# Source the config
+_CONFFILE=/etc/updater.conf
+[ -f ${_CONFFILE} ] && . ${_CONFFILE}
+
+# Check if update is available
+if [ ! -f ${_UPDATE_FILE} ]; then
+	msg "No update file found" W
+	exit ${_ERROR_NO_UPDATE_FILE}
+fi
+
+if [ "$1" == "-i" ]; then
+	get_batt_percent
+	BATT=$?
+	if [ -s "$BATT" ]; then
+		msg "Failed to read battery. Not starting update" E
+		return $_ERROR_BATT_FAILED
+	fi
+
+	if [ $BATT -ge ${_MIN_BATT} ]; then
+		msg "Immediate update requested.  Starting" I
+
+		# Kill any running updatewaits processes
+		killall updatewait 2>/dev/null
+
+		${_UPDATE_WAIT} $@
+		exit $?
+	else
+		msg "Battery too low to start update" E
+		exit ${_ERROR_BATT_LOW}
+	fi
+else
+	# Check if updatewait is already running
+	UPDATEWAIT_BASE=`basename ${_UPDATE_WAIT}`
+	NPROCS=`pgrep ${UPDATEWAIT_BASE} | wc -l`
+	if [ $NPROCS -gt 0 ]; then
+		msg "$UPDATEWAIT_BASE is already running" W
+		exit 0
+	fi
+
+	# Start updatewait in background and exit
+	${_UPDATE_WAIT} &
+	msg "Started ${_UPDATE_WAIT}" I
+	exit 0
+fi
+

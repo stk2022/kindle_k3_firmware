@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+modprobe -r g_file_storage

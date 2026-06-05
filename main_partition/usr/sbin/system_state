@@ -1,0 +1,86 @@
+#!/bin/sh
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# system info
+MEMINFO=$(cat /proc/meminfo)
+
+for i in CommitLimit WritebackTmp PageTables SUnreclaim SReclaimable Slab Mapped AnonPages Writeback Dirty Inactive Active Cached Buffers MemFree
+do
+	SMSG="$i=$(echo $MEMINFO | sed "s/.* $i:"'[ \t]*\([0-9]*\).*/\1/'), $SMSG"
+done
+SMSG=$(echo $SMSG | sed 's/\(.*\),/\1:/')
+msg "$SMSG" I "sinfo"
+
+# pre-process info
+pmon summary | grep [0-9] | while IFS=- read NAMEPID state mem_limit MEMCURR
+do
+	PID=$(echo $NAMEPID | sed 's/.*\[\([0-9]*\)]/\1/')
+	CMD=$(echo $NAMEPID | sed 's/\(.*\)\[.*/\1/')
+	if [ "$PID" -eq 0 ] ; then
+		MSG="cmd=$CMD:"
+		msg $MSG I "pinfo_notrunning"
+	else
+		MC=$(echo $MEMCURR | sed 's/\([0-9]*\)/\1/')   # remove leading and trailing space
+
+		PROCSTAT=$(cat /proc/$PID/stat)
+		STATE=$(echo $PROCSTAT | awk '{print $3}')
+		UTIME=$(echo $PROCSTAT | awk '{print $14}')
+		STIME=$(echo $PROCSTAT | awk '{print $15}')
+
+		if [ -s /var/tmp/UTIME_$CMD ] ; then
+			DUTIME=$(($UTIME-$(cat /var/tmp/UTIME_$CMD)))
+		else
+			DUTIME=0
+		fi
+		echo $UTIME > /var/tmp/UTIME_$CMD
+
+		if [ -s /var/tmp/STIME_$CMD ] ; then
+			DSTIME=$(($STIME-$(cat /var/tmp/STIME_$CMD)))
+		else
+			DSTIME=0
+		fi
+		echo $STIME > /var/tmp/STIME_$CMD
+
+		msg "cmd=$CMD, mem_curr=$MC, state=$STATE, dutime=$DUTIME, dstime=$DSTIME:" I "pinfo"
+	fi
+done
+
+##
+## network info. Comment out the network info for Shasta GM. We might need them later.
+## 
+#parse_net_data() {
+#	eval bTx_$1=$(echo $2 | awk '{print $2}')
+#	eval nTx_$1=$(echo $2 | awk '{print $3}')
+#	eval bRx_$1=$(echo $2 | awk '{print $10}')
+#	eval nRx_$1=$(echo $2 | awk '{print $11}')
+#}
+
+#gen_net_log() {
+#	if [ -s /var/tmp/$1 ] && [ $2 -gt $(cat /var/tmp/$1) ] ; then
+#		eval d$1=$(($2-$(cat /var/tmp/$1)))
+#	else
+#		eval d$1=0
+#	fi
+#	echo $2 > /var/tmp/$1
+#}
+
+#NETSTAT=$(cat /proc/net/dev | sed 's/:/ /g')
+#wlan=$(echo "$NETSTAT" | grep wlan0)
+#wifi=$(echo "$NETSTAT" | grep ppp0)
+
+#parse_net_data wlan "$wlan"
+#parse_net_data wifi "$wifi"
+
+#gen_net_log bTx_wlan ${bTx_wlan}
+#gen_net_log nTx_wlan ${nTx_wlan}
+#gen_net_log bRx_wlan ${bRx_wlan}
+#gen_net_log nRx_wlan ${nRx_wlan}
+
+#gen_net_log bTx_wifi ${bTx_wifi}
+#gen_net_log nTx_wifi ${nTx_wifi}
+#gen_net_log bRx_wifi ${bRx_wifi}
+#gen_net_log nRx_wifi ${nRx_wifi}
+
+#msg "dbTx_wlan=${dbTx_wlan}, dnTx_wlan=${dnTx_wlan}, dbRx_wlan=${dbRx_wlan}, dnRx_wlan=${dnRx_wlan},
+#dbTx_wifi=${dbTx_wifi}, dnTx_wifi=${dnTx_wifi}, dbRx_wifi=${dbRx_wifi}, dnRx_wifi=${dnRx_wifi}:" I "ninfo"

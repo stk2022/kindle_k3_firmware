@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+/usr/sbin/netwatchd -f -s 22,5900,8000

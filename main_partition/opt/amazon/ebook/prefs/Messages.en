@@ -1,0 +1,13 @@
+alert.sd_card.mount.fail = The inserted SD memory card could not be read. Please reformat the card or use a different, compatible card.
+alert.sd_card.lock = Your SD card is locked. Please unlock the card by sliding the lock tab on the side of the card to the unlocked position or use a different SD card.
+
+alert.file_operation.internal.not_enough_space = The selected item could not be moved because you do not have enough Kindle memory available. Please make room for new content by removing items from Kindle memory.
+alert.file_operation.sd.not_enough_space = The selected item could not be moved because you do not have enough SD memory card space available. Please make room for new content by removing items from your SD memory card.
+
+alert.no_update_available = No update file is present.
+alert.ac_adapter_required_for_update = Your AC adapter must be plugged in to proceed with the update.
+
+overlay.apply_update_title = Update Your Kindle
+overlay.apply_update_body = You are about to update the software on your Kindle. Do you wish to continue?
+
+booklet.apply_update = Preparing to apply update, this might take a minute...

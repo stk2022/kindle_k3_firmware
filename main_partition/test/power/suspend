@@ -1,0 +1,48 @@
+#!/bin/sh
+
+# Copyright 2008 Lab126 Inc
+# This script sets the performance CPU Freq and suspends the system
+# Once the system resumes, the CPU freq is set to conservative governor
+#
+# Author: saileshr@lab126.com
+
+
+wait_secs () {
+        COUNT=$1
+        echo "Waiting $COUNT seconds "
+        while [ $COUNT -gt 0 ]; do
+                echo -n "."
+                sleep 1
+                COUNT=$((COUNT-1))
+        done
+        echo ""
+}
+
+echo "************************************************************"
+echo "***************** WARNING **********************************"
+echo "************************************************************"
+echo "This script is for measuring power in suspend state only"
+echo "Don't expect the system to function normally after using"
+echo "this script"
+echo "************************************************************"
+echo "************************************************************"
+
+
+echo "Killing powerd"
+/etc/init.d/powerd stop  >/dev/null 2>/dev/null
+
+echo "performance">/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+
+wait_secs 10
+
+echo "Suspending..."
+echo "mem">/sys/power/state
+echo "Resuming..."
+
+wait_secs 10 
+
+echo "ondemand">/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+
+echo "Starting powerd"
+/etc/init.d/powerd start >/dev/null 2>/dev/null
+

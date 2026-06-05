@@ -1,0 +1,147 @@
+#Home Preferences
+DISPLAY_NAME=Search Amazon
+IMG_DIRECTORY=img
+XYML_CACHE_DIRECTORY=/tmp/apps/xyml_cache
+KINDLE_VERSION=Kindle/2.0
+XYML_VERSION=1.1
+STORE_VERSION=2.0
+LOCAL_XYML_PAGES_DIRECTORY=xyml
+START_URL=storefront.xml
+SEARCH_URL=search_results.xml
+SS_TEMPLATE=searchSuggestions.xml
+VIEW_DETAILS_URL=item_details.xml
+VIEW_ACTIVE_CONTENT_RELEASE_NOTES_URL=active_content_release_notes.xml
+BUY_EBOOK_DETAILS=buy_ebook.xml
+ADD_TO_WISHLIST=addToWishList.xml
+SAVE_FOR_LATER_URL=wishlist.xml
+SEARCH_KEYWORD=phrase
+PAPER_SEARCH_BINDING_NAME=i
+PAPER_SEARCH_BINDING_VALUE=stripbooks
+SITB_URL=sitb_results.xml
+TODO_NOW_ACTION=todo_process
+SUPPRESS_HISTORY=suppress_history
+AUTOMATIC_DOWNLOADS=enabled
+PAGE_FORWARD_SUBMIT=pageForward
+PAGE_BACK_SUBMIT=pageBack
+
+#Image Cache constants
+CACHE_IMAGES=true
+CACHE_IMG_DIR=/tmp/apps/img/cache
+MAX_IMG_CAPACITY=333333
+MAX_XYML_CAPACITY=333333
+
+#default font info
+FONT_FAMILY=SanSerif
+FONT_SIZE=22
+FONT_SIZE_PLUS_ONE=28
+FONT_SIZE_PLUS_TWO=28
+FONT_SIZE_MINUS_ONE=16
+FONT_SIZE_MINUS_TWO=16
+
+#default settings for displaying server errors
+ERROR_X=35
+ERROR_Y=35
+ERROR_WIDTH=450
+ERROR_HEIGHT=400
+ERROR_FONT_SIZE=-2
+
+#geometric constants for submit button
+SUBMIT_FONT_STYLE=italic
+SUBMIT_HEIGHT=24
+SUBMIT_RIGHT_MARGIN=25
+SUBMIT_BUTTON_X_MARGIN=10
+SUBMIT_BUTTON_Y_MARGIN=3
+SUBMIT_BUTTON_BORDER_THICKNESS=2
+SUBMIT_BUTTON_ROUND_X=3
+SUBMIT_BUTTON_ROUND_Y=3
+
+#CXN STATUS BAR
+CXN_STATUS_X=15
+CXN_STATUS_WIDTH=360
+CXN_STATUS_HEIGHT=25
+CXN_STATUS_Y_BUFFER=5
+
+#SIDEBAR CONSTANTS
+IMAGE_X_OFFSET=585
+
+#LARGE MESSAGE CONSTANTS
+FONT_SIZE_LG_MSG=42
+X_LG_MSG=100
+Y_LG_MSG=100
+W_LG_MSG=400
+H_LG_MSG=150
+X_BUFF_LG_MSG=7
+Y_BUFF_LG_MSG=7
+
+#geometric constants for overlay
+OVERLAY_VERTICAL_OFFSET=0
+OVERLAY_BUFFER=32
+OVERLAY_HEIGHT=16
+OVERLAY_TEXT_VERT_CORRECTION=45
+
+#geometric constants for text overlay
+TEXT_OVERLAY_X=130
+TEXT_OVERLAY_Y=20
+TEXT_OVERLAY_WIDTH=300
+TEXT_OVERLAY_HEIGHT=50
+TEXT_OVERLAY_LEFT_MARGIN=10
+
+#geometric constants for radio button
+RADIO_DIM=10
+RADIO_BUFFER=3
+RADIO_RIGHT_MARGIN=10
+
+#geometric constants for checkbox
+CHECKBOX_DIM=10
+CHECKBOX_BUFFER=3
+CHECKBOX_RIGHT_MARGIN=10
+
+#geometric constants for textbox
+TEXTBOX_HEIGHT=40
+TEXTBOX_FOCUS_THICKNESS=4
+TEXTBOX_STRING_MARGIN=4
+
+#geometric constants for text
+LEFT_X_MARGIN=20
+RIGHT_X_MARGIN=10
+LINE_X_MARGIN=5
+LINE_Y_MARGIN=40
+LINE_TEXT_Y_MARGIN=3
+TEXTAREA_LINE_MARGIN=25
+TEXTAREA_HEIGHT=1
+SEARCH_LINE_THICKNESS=5
+SEARCH_BOX_HEIGHT=70
+A_HREF_TEXT_STYLE=Monospaced
+
+#reftags
+SEARCH_REF_TAG=kinx_reg_search
+SS_REF_TAG_PREFIX=kinx_ss_sugg_
+
+#your recent history page
+RECENT_HISTORY_PAGE_NAME=history.xyml
+RECENT_HISTORY_DIV_PREFIX=historyDiv
+RECENT_HISTORY_SEARCH_MAX_SIZE=20
+RECENT_HISTORY_BROWSE_MAX_SIZE=20
+RECENT_HISTORY_CACHE_DIRECTORY=/var/local/store/recent-history-cache
+# Restore commented version when/if the DE store prod URL is www.amazon.de
+RECENT_HISTORY_DONT_CLEAR_WHITELIST=
+# RECENT_HISTORY_DONT_CLEAR_WHITELIST=website-g7g.amazon.|kindle-g7g.amazon.
+
+#Note, the following preferences are fallback values only.
+#They are now retrieved from the xyml template.
+#See SearchSuggestionsPrefs for more details.
+
+#are search suggestions enabled?
+SS_ENABLED=1
+
+#timings (in ms) for search suggestions
+TYPING_PAUSE_INTERVAL=1400
+MAX_TYPING_INTERVAL=10000
+
+#delay (in ms) for switching SearchBar's mode from NORMAL to HISTORY 
+SS_HISTORY_MODE_DELAY=300
+
+# Client-side metrics
+STORE_METRICS_BUFFER_SIZE_LIMIT=5
+STORE_METRICS_DEFAULT_UPLOAD_TTL=60
+STORE_METRICS_UPLOAD_PATH=/gp/xyml/upload-metrics.xyml

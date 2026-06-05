@@ -1,0 +1,247 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   fct.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   10/14/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Mario platform FCT HAL layer for the fixture diagnostic scripts.  
+#   This file will define various HAL routines needed for the fixture
+#   FCT diagnostic.
+#
+#   This file contains an FCT HAL for the Mario platform, which includes:
+#
+#   Constants
+#       FCT_SPEAKER_AUDIO_VOLUME    - Default volume for audio speaker test
+#       FCT_HP_AUDIO_VOLUME         - Default volume for audio hp test
+#       FCT_HP_DETECT_CANCEL_TIMEOUT- mSec to wait each time checking for cancel
+#                                       during headphone detection process
+#
+#   Hal Routines
+#       do_run_fct()                - Main FCT diagnostic test
+#       fct_hal_init(void)          - Hal initialization routine
+#       fct_hal_exit(void)          - Hal teardown routine
+#
+######################################################################
+
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+# Default volume for audio speaker FCT test
+export FCT_SPEAKER_AUDIO_VOLUME=50
+
+# Default volume for audio headphone FCT test
+export FCT_HP_AUDIO_VOLUME=50
+
+# Timeout to wait looking for cancel from fixture (in mSec)
+export FCT_HP_DETECT_CANCEL_TIMEOUT=10
+
+
+
+######################################################################
+# Function:     do_run_fct
+# Purpose:      Main routine for running the FCT fixture test.
+#               This diagnostic communicates with the fixture via the
+#               serial console only.  
+#
+#               It will watch for an exit request from the user to exit
+#               the test.
+# Paramters:    none
+# Returns:      0 - Test passed
+#               1 - Test failed
+#               2 - Operator cancelled via selecting "x"
+# Side Effect:  SUB_TEST_PASSED will get set 0 on any failures
+#
+#               If test "passes", we never return as it ends in a "Ship
+#               mode" operation, which halts the processor and will wake
+#               to a cold boot, returning to the main diagnostic menu.
+######################################################################
+do_run_fct()
+{
+    vmsg "do_run_fct()"
+
+    # Tell user what's going on...
+    display_fct_screen
+    if [ $? -eq 1 ]; then
+        # Operator cancelled test
+        return 2
+    fi
+
+    #
+    # Start the FCT test
+    #
+
+    # Turn the WAN on, don't wait for confirmation
+    wan_power_background $WAN_POWER_ON 0
+
+    # Gather device information
+    fct_gather_device_information
+
+    # Send fixture some info
+    echo "Serial Number: $DEVICE_SERIAL_NUMBER" 
+    echo "Diagnostic Version: $DIAGNOSTICS_VERSION" 
+    echo "Panel ID: $DEVICE_PANEL_ID"
+    echo "PCB ID: $DEVICE_PCB_ID"
+    echo "Batt Current Draw: $FCT_BATT_CURRENT_DRAW"
+    echo "Batt Voltage: $FCT_BATT_VOLTAGE"
+    echo "Batt Capacity: $FCT_BATT_CAPACITY"
+
+    # Start Audio with Stereo Speakers Enabled
+    audio_start_sound $CHANNEL_SPEAKER_STEREO $FCT_SPEAKER_AUDIO_VOLUME
+
+    # Prompt fixture to take measurements, insert headphones when done
+    echo "Fixture: Insert headphones once speaker test is complete.  Press $SUCCESS_KEY_LABEL once headphones have been inserted."
+
+    # Wait for fixture reply
+    wait_for_key $SUCCESS_KEY
+
+	if [ -n "$DISABLE_HEADPHONE_DETECTION" ] && [ $DISABLE_HEADPHONE_DETECTION -eq 1 ]; then
+		# want to say "detection disabled" here, but won't change response string to avoid code change on SSP fixture
+       	echo "Headphones In"
+	else
+    	# Wait for headphone insertion before continuing, watching for
+    	#  device to indicate something went wrong (timed out waiting for detection)
+    	audio_fct_wait_hp_detect in
+    	fct_hp_detect_failed=$?
+    	if [ $fct_hp_detect_failed -eq 0 ]; then
+        	echo "Headphones In"
+    	else
+        	echo "Headphones NOT In"
+    	fi
+	fi
+
+    # Enable Stereo Headphone Channels
+    # enable_channel $CHANNEL_HP_STEREO
+    
+    # Prompt fixture to take measurements, remove headphones when done
+    echo "Fixture: Remove headphones once stereo HP test is complete.  Press $SUCCESS_KEY_LABEL once headphones have been removed."
+
+    # Wait for fixture reply
+    wait_for_key $SUCCESS_KEY
+
+    # Wait for headphone removal before continuing, watching for
+    #  device to indicate something went wrong (timed out waiting for detection)
+	if [ -n "$DISABLE_HEADPHONE_DETECTION" ] && [ $DISABLE_HEADPHONE_DETECTION -eq 1 ]; then
+		# want to say "detection disabled" here, but won't change response string to avoid code change on SSP fixture
+       	echo "Headphones Out"
+	else
+    	audio_fct_wait_hp_detect out
+    	fct_hp_detect_failed=$?
+    	if [ $fct_hp_detect_failed -eq 0 ]; then
+        	echo "Headphones Out"
+    	else
+        	echo "Headphones NOT Out"
+    	fi
+	fi
+
+    # Turn Audio Off
+    audio_stop_sound
+
+    # Enable VCOM Power Rails
+    video_enable_vcom_power
+    if [ $? -eq 1 ]; then
+        echo "ERROR: System support for enabling VCOM power is not present."
+        failure "FCT VCOM System Support Missing"
+        return 1
+    fi
+
+    # Verify WAN is actually ON - WAIT for confirmation or time out waiting...
+    wan_power_verify_fct $WAN_POWER_ON
+    if [ $? -eq 1 ]; then
+        echo "ERROR: Timed out waiting for WAN to power on."
+        failure "FCT WAN Power On Timeout"
+        return 1
+    fi
+
+    # Prompt fixture to take WAN power measurements and send a 1 when complete
+    echo "Fixture: Press $SUCCESS_KEY_LABEL when WAN On power measurements are complete."
+
+    # Wait for the "1" from fixture before continuing
+    wait_for_key $SUCCESS_KEY
+
+    # Put the WAN into TPH mode - do NOT wait for confirmation
+    wan_power_background $WAN_POWER_ON_TO_TPH 0    
+
+    # Start VCOM test, let fixture measure VCOM and stop test
+    video_vcom_fct_test
+
+    # Verify WAN is in TPH - WAIT for confirmation or time out waiting....
+    wan_power_verify_fct $WAN_POWER_ON_TO_TPH
+    if [ $? -eq 1 ]; then
+        echo "Fixture: ERROR - Timed out waiting for WAN to enter TPH mode."
+        failure "FCT WAN Power TPH Mode Timeout"
+    fi
+
+    # Prompt fixture to take TPH power measurements, wake the device when done
+    echo "Fixture: Wake device when Sleep with TPH measurements are complete."
+
+    # Put device to sleep (in TPH mode)
+    device_power_state $POWER_SLEEP_WAN_TPH 0
+
+    # Turn the WAN OFF - do NOT wait for confirmation
+    wan_power_background $WAN_POWER_OFF 0    
+
+    # Just woke up, prompt device to take ship mode measurements
+    echo "Fixture: Putting device into shipping mode."
+
+    # Put device into ship mode
+    # do_device_pre_reboot_cleanup
+    power_shipping_mode
+    FOO=0
+    while [ 1 ]; do
+        vmsg "Waiting for power off..."
+        let FOO+=1
+    done;
+
+    #
+    # We're done - we never return here...
+    #
+}
+######################################################################
+# Function:     fct_hal_init
+# Purpose:      Hal init routine for the fct hal.  It currently
+#               calls the other hal init routines required for running
+#               the FCT diagnostic (WAN, Power, Video, Audio)
+# Paramters:    none
+# Returns:      none
+######################################################################
+fct_hal_init()
+{
+    #
+    # Initialize support HALs...
+    #
+    vmsg "fct_hal_init()"
+    audio_hal_init
+    wan_hal_init
+    power_hal_init
+    video_hal_init
+}
+
+
+######################################################################
+# Function:     fct_hal_exit
+# Purpose:      Hal cleanup exit routine for the fct hal.  It currently
+#               calls the support HALs' exit routines
+# Paramters:    none
+# Returns:      none
+######################################################################
+fct_hal_exit()
+{
+    #
+    # Uninitialize all support hals
+    #
+    vmsg "fct_hal_exit()"
+    audio_hal_exit
+    wan_hal_exit
+    power_hal_exit
+    video_hal_exit
+}

@@ -1,0 +1,384 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   dev_settings.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   07/22/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#       Mario platform device settings HAL layer for the device settings module.
+#       This file defines various HAL routines for setting device
+#       options.
+#
+#   This file contains a HAL for the Mario platform, which includes:
+#
+#   Hal Routines
+#       dev_get_mac_address(void)   - Load DEVICE_MAC_ADDRESS with MAC addr
+#       dev_set_mac_address(addr)   - Save off the MAC address
+#       dev_get_manuf_code(void)    - Load DEVICE_MANUF_CODE with manufacturer code
+#       dev_set_manuf_code(code)    - Save off the manufacturer code
+#       dev_get_pcb_id(void)        - Load DEVICE_PCB_ID with pcb id
+#       device_set_panel_id()       - Write panel id to NOR
+#       device_set_pcb_id           - Write pcb id to NOR
+#       device_set_serial_number    - Write serial number to NOR
+#		dev_get_serial_number		- Get the device serial number
+#		dev_create_device_info_log	- Create a device information logfile
+#       dev_settings_hal_init(void) - Hal initialization routine
+#       dev_settings_hal_exit(void) - Hal teardown routine
+#
+######################################################################
+
+# Video hal
+[ -f ${_VIDEO_HAL_FUNCTIONS} ] && . ${_VIDEO_HAL_FUNCTIONS}
+
+######################################################################
+# Function:     device_set_serial_number
+# Purpose:      Store the DEVICE_SERIAL_NUMBER in the system (NOR flash)
+# Paramters:    none
+# Returns:      none
+# Side Effect:  SUB_TEST_PASSED is cleared on failure
+#               Sets device serial number in NOR
+######################################################################
+device_set_serial_number()
+{
+    ${SERIAL_NUMBER_SET_TOOL} "$DEVICE_SERIAL_NUMBER" > /dev/null 2>&1
+    status="$?"
+    if [ $status -ne 0 ]; then
+        echo "$SERIAL_NUMBER_SET_TOOL $DEVICE_SERIAL_NUMBER returned error $status"
+        failure "Serial Number Setting"
+    else
+        success "Serial Number Set to $DEVICE_SERIAL_NUMBER"
+    fi
+}
+
+
+######################################################################
+# Function:     device_set_panel_id
+# Purpose:      Store the DEVICE_PANEL_ID in the system (NOR flash)
+# Paramters:    none
+# Returns:      none
+# Side Effect:  SUB_TEST_PASSED is cleared on failure
+######################################################################
+device_set_panel_id()
+{
+    echo "device_set_panel_id($DEVICE_PANEL_ID) calling $PANEL_SET_TOOL"
+    ${PANEL_SET_TOOL} "$DEVICE_PANEL_ID" > /dev/null 2>&1
+    status="$?"
+    if [ $status -ne 0 ]; then
+        echo "$PANEL_SET_TOOL $DEVICE_PANEL_ID returned error $status"
+        failure "EINK Panel ID Setting"
+    else
+        success "EINK Panel ID Setting"
+    fi
+}
+
+
+######################################################################
+# Function:     dev_get_serial_number
+# Purpose:      Get the DEVICE_SERIAL_NUMBER from the system (NOR flash)
+# Paramters:    none
+# Returns:      none
+# Side Effect:  DEVICE_SERIAL_NUMBER is set
+######################################################################
+dev_get_serial_number()
+{
+    export DEVICE_SERIAL_NUMBER=`idme --serial ?`
+}
+
+
+######################################################################
+# Function:     dev_get_pcb_id
+# Purpose:      Load the DEVICE_PCB_ID with the device's PCBA ID
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets DEVICE_PCB_ID global
+######################################################################
+dev_get_pcb_id()
+{
+    export DEVICE_PCB_ID=`idme --pcbsn ?`
+}
+
+
+######################################################################
+# Function:     device_set_pcb_id
+# Purpose:      Store the DEVICE_PCB_ID in the system (NOR flash)
+# Paramters:    none
+# Returns:      none
+# Side Effect:  SUB_TEST_PASSED is cleared on failure
+#               Sets device pcb id in NOR
+######################################################################
+device_set_pcb_id()
+{
+    ${PCB_ID_SET_TOOL} "$DEVICE_PCB_ID" > /dev/null 2>&1
+    status="$?"
+    if [ $status -ne 0 ]; then
+        echo "$PCB_ID_SET_TOOL $DEVICE_PCB_ID returned error $status"
+        failure "PCBA ID Setting"
+    else
+        success "PCBA ID Setting"
+    fi
+}
+
+
+######################################################################
+# Function:     dev_get_manuf_code
+# Purpose:      Load the DEVICE_MANUF_CODE with the device's 
+#               manufacturer code
+# Parameters:   none
+# Returns:      none
+# Side Effect:  Sets DEVICE_MANUF_CODE global
+######################################################################
+dev_get_manuf_code()
+{
+    export DEVICE_MANUF_CODE=`idme --mfg "?"`
+}
+
+
+
+######################################################################
+# Function:     do_manuf_code_verify
+# Purpose:      Verify the manufacturer code is correct
+# Parameters:   code - manufacturer code to verify (20 hex characters)
+# Returns:      0 - Success
+#               1 - Manufacturer code invalid for this device or 
+#                   failure saving
+######################################################################
+do_manuf_code_verify()
+{
+    _manuf_code="$1"
+
+    # If the mac address has not been set, do so now
+    if [ -z "$DEVICE_MAC_ADDRESS" ] || [ "$DEVICE_MAC_ADDRESS" = "000000000000" ] || [ "$DEVICE_MAC_ADDRESS" = "FFFFFFFFFFFF" ]; then
+        dev_get_mac_address
+        # If it's still unset, or is 0 / not set, error out, we need MAC address
+        if [ -z "$DEVICE_MAC_ADDRESS" ] || [ "$DEVICE_MAC_ADDRESS" = "000000000000" ] || [ "$DEVICE_MAC_ADDRESS" = "FFFFFFFFFFFF" ]; then
+            do_local_echo "Manufacturer code can't be verified."
+            failure "Manufacturer code can't be verified."
+            return 1
+        fi
+    fi
+
+    _manuf_code_tag=`echo "${_manuf_code}" | cut -b 17-`        
+    _manuf_code_verify=`echo -n "$DEVICE_MAC_ADDRESS" | md5sum | cut -b 29- | cut -c 1-4`
+
+    # convert both to the same case
+    _manuf_code_verify=`printf "%x" 0x$_manuf_code_verify`
+    _manuf_code_tag=`printf "%x" 0x$_manuf_code_tag`
+
+    if [ "x$_manuf_code_tag" != "x$_manuf_code_verify" ]; then
+        do_local_echo "Manufacturer code verify failed"
+        failure "Manufacturer Code Verify"
+        return 1
+    else
+        success "Manufacturer Code Verified"
+        return 0
+    fi
+}
+
+
+######################################################################
+# Function:     device_set_manuf_code
+# Purpose:      Write the manufacturer code to the flash
+# Parameters:   code - manufacturer code to write (20 hex characters)
+# Returns:      0 - Success
+#               1 - manufacturer code invalid for this device or 
+#                   failure saving
+######################################################################
+device_set_manuf_code()
+{
+    _manuf_code="$1"
+
+    # If product to verify manufacturer code, do so now
+    if [ "x$HAS_MANUFACTURER_CODE_VERIFY" == "x1" ]; then
+        do_manuf_code_verify $_manuf_code
+        _status=$?
+        if [ $_status -ne 0 ]; then
+            return $_status
+        fi
+    fi
+
+    echo "Setting Manufacturer Code to ${_manuf_code}"
+    ${DO_SET_MANUF_CODE_CMD} "$_manuf_code" > /dev/null 2>&1
+    status="$?"
+    if [ $status -ne 0 ]; then
+        do_local_echo "$DO_SET_MANUF_CODE_CMD $_manuf_code returned error $status"
+        failure "Manufacturer Code Setting"
+        return 1
+    else
+        success "Manufacturer Code Setting"
+        return 0
+    fi
+}
+
+
+######################################################################
+# Function:     dev_get_mac_address
+# Purpose:      Load the DEVICE_MAC_ADDRESS with the device's MAC address
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Sets DEVICE_MAC_ADDRESS global
+######################################################################
+dev_get_mac_address()
+{
+    export DEVICE_MAC_ADDRESS=`idme --mac "?"`
+}
+
+
+######################################################################
+# Function:     dev_set_mac_address
+# Purpose:      Write the MAC address to the flash
+# Paramters:    addr - mac address to write (12 hex characters)
+# Returns:      none
+######################################################################
+dev_set_mac_address()
+{
+    _mac_addr="$1"
+    echo "Setting MAC address to ${_mac_addr}"
+    idme --mac "${_mac_addr}"
+}
+
+
+######################################################################
+# Function:     dev_create_device_info_log
+# Purpose:      Create a logfile on the user store with the following
+#				device information:
+#
+#				FSN					Example: B003A0A093720F69
+#				IMEI				Example: 353019031316857
+#				ICCID				Example: E0R004531J8437977AT
+#               MSID                Example: 310410291730474
+#				EINK Serial No		Example: V110_B053_60_WE4302_BTC
+#				E-Ink Ware Form Ver	Example: A093671E61TWW
+#				MLB No.				Example: TS25AS719BANA1964
+#				Battery SN			Example: 89014104233056748046
+#				SW Version			Example: 239-TWWU1-037589
+#               MAC Address         Example: 001122334455
+#               Manufacturer Code   Example: 1234567890ABCDEF0123              
+#
+# Parameters:	none
+# Returns:      none
+# Side Effects:	Creates a device information logfile on the user store
+######################################################################
+dev_create_device_info_log()
+{
+	# Product Name
+	echo "Product:           $PRODUCT_NAME" > "$DEVICE_INFORMATION_LOGFILE"
+
+	# FSN					Example: B003A0A093720F69
+	dev_get_serial_number
+	echo "FSN:               $DEVICE_SERIAL_NUMBER" >> "$DEVICE_INFORMATION_LOGFILE"
+
+	# IMEI					Example: 353019031316857
+	# ICCID					Example: E0R004531J8437977AT
+    # MSID                  Example: 310410291730474
+    if [ -f "$WAN_INFORMATION_LOGFILE" ]; then
+		cat "$WAN_INFORMATION_LOGFILE" >> "$DEVICE_INFORMATION_LOGFILE"
+	else
+		echo "WAN INFORMATION NOT AVAILABLE, was the WAN diagnostic run?" >> "$DEVICE_INFORMATION_LOGFILE"
+	fi
+
+    if [ -n "$HAS_MAC_ADDRESS" ] && [ $HAS_MAC_ADDRESS -eq 1 ]; then
+        # MAC Address & Manufacturer Code
+        if ! [ -n "$DEVICE_MAC_ADDRESS" ]; then
+            # Haven't loaded DEVICE_MAC_ADDRESS yet, do so now...
+            dev_get_mac_address
+        fi
+        echo "MAC Address:       $DEVICE_MAC_ADDRESS" >> "$DEVICE_INFORMATION_LOGFILE"
+        if ! [ -n "$DEVICE_MANUF_CODE" ]; then
+            # Haven't loaded DEVICE_MANUF_CODE yet, do so now...
+            dev_get_manuf_code
+        fi
+        echo "Manufacturer Code: $DEVICE_MANUF_CODE " >> "$DEVICE_INFORMATION_LOGFILE"
+    fi
+
+    # EINK Serial No		Example: V110_B053_60_WE4302_BTC
+    get_eink_waveform_version
+	echo "EINK Waveform:	   $_WAVEFORM_EINK_VERSION" >> "$DEVICE_INFORMATION_LOGFILE"
+
+	# E-Ink Waveform Ver	Example: A093671E61TWW
+	video_get_panel_id
+	echo "EINK Panel ID:	   ${DEVICE_PANEL_ID}" >> "$DEVICE_INFORMATION_LOGFILE"
+
+	# MLB No.				Example: TS25AS719BANA1964
+	dev_get_pcb_id
+	echo "PCB ID:	           $DEVICE_PCB_ID" >> "$DEVICE_INFORMATION_LOGFILE"
+
+	#	How to translate battery id to SN
+	#	5	4	3	2	1	Bit 0	Model 
+	# 	0 	0	0	0	0	0		170-1012-00 
+	# 	0	0	0	0	1	0		170-1012-01 
+	# 	0	0	0	1	0	0		170-1032-00 
+	# 	0	0	0	1	1	0		Reserve 
+	# 	..	..	..	..	..	..		...... Reserve 
+	# 	1	1	1	1	1	0		Reserve 
+	#
+	# Battery SN			Example: 89014104233056748046
+	#
+
+	# Get battery id and use bottom 6 bits to reference part number
+	_battery_id=`gg_get_battery_id`
+	vendor_id=`echo $(( _battery_id & 192 ))` > /dev/null 2>&1
+	part_id=`echo $(( _battery_id & 63 ))` > /dev/null 2>&1
+	case $part_id in
+		0)	_battery_model="170-1012-00"
+			;;
+		2)	_battery_model="170-1012-01"
+			;;
+		4)	_battery_model="170-1032-00"
+			;;
+		6)	_battery_model="170-1032-01"
+			;;
+		*)	_battery_model="Unknown (reserved)"
+			echo "Unknown Battery ID: $_battery_id" >> "$DEVICE_INFORMATION_LOGFILE"
+			;;
+	esac
+    case $vendor_id in
+        0)      _battery_vendor="ATL"; ;;
+        64)     _battery_vendor="Samsung";  ;;
+        128)    _battery_vendor="LICO";  ;;
+        192)    _battery_vendor="Reserved";  ;;
+        *)      _battery_vendor="UNKNOWN";  ;;
+    esac
+	# Print our battery model number
+	echo "Battery Vendor:	   ${_battery_vendor}" >> "$DEVICE_INFORMATION_LOGFILE"
+	echo "Battery Model:	   ${_battery_model}" >> "$DEVICE_INFORMATION_LOGFILE"
+
+	# SW Version			Example: 239-TWWU1-037589
+	echo "SW Version:	   $SOFTWARE_FS_VERSION" >> "$DEVICE_INFORMATION_LOGFILE"
+}
+
+
+######################################################################
+# Function:     dev_settings_hal_init
+# Purpose:      Hal initialization routine for dev settings.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+dev_settings_hal_init()
+{
+    #
+    # Nothing to do here...
+    #
+    vmsg "dev_settings_hal_init()"
+}
+
+
+######################################################################
+# Function:     dev_settings_hal_exit
+# Purpose:      Hal initialization routine for dev settings.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+dev_settings_hal_exit()
+{
+    #
+    # Nothing to uninitialize for device settings hal
+    #
+    vmsg "dev_settings_hal_exit()"
+}

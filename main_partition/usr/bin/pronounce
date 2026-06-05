@@ -1,0 +1,14 @@
+#!/bin/sh
+
+if [ -z "$1" ]; then
+    echo "Usage:"
+    echo "    $0 'phonetic transcription to pronounce'"
+    echo
+    echo "Phonetic transcription documentation is available in svn,"
+    echo "/trunk/drops/nuance/vfa/2010_01_15/Nuance_Amazon_Kindle_VfA_arm_2010_01_15_M4.tar.gz"
+    echo "file vfa522_arm_linux/man/vautov5_enu.pdf"
+    exit
+fi
+
+printf '{ id=(0), text="\x1b/+%s\x1b/+" }' "$(echo $1 | sed -e 's/\([\\"]\)/\\\1/g')" \
+    | lipc-hash-prop com.lab126.ttsd playSnippetNow

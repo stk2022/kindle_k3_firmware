@@ -1,0 +1,33 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_FEATURES=/etc/rc.d/features
+[ -f ${_FEATURES} ] && . ${_FEATURES}
+
+{ ( is_Luigi_Platform ) && _MODULES=/etc/modules.luigi ; } || _MODULES=/etc/modules ;
+
+case "$1" in
+	start)
+		if [ ! -e /lib/modules/`uname -r`/modules.dep ]; then
+			mntroot_rw
+			msg "processing module dependencies" I
+			depmod -ae
+			mntroot_ro
+		fi
+		grep '^[^#]' ${_MODULES} | while read _module _args ; do
+			[ "$_module" ] || continue
+			msg "loading module $_module" I
+			modprobe $_module $_args
+			[ $? -eq 0 ] || msg "failed to load module $_module" C 
+		done
+		;;
+	stop|*)
+		msg "Usage: $0 (start)" W
+		exit 1
+		;;
+esac
+
+exit 0
+

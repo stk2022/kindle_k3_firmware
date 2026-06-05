@@ -1,0 +1,34 @@
+<stylesheet>
+
+<style _tag="page">
+<rule attr="continue" value="ignore" />
+<rule attr="display" value="block" />
+<rule attr="layout" value="reflow" />
+</style>
+
+<style _tag="region">
+<rule attr="layout" value="relative" />
+<rule attr="margin" value="0" />
+</style>
+
+<style _tag="region" type="header">
+<rule attr="display" value="none" />
+</style>
+
+<style _tag="region" type="footer">
+<rule attr="display" value="none" />
+</style>
+
+<style _tag="region" type="text">
+<rule attr="layout" value="spill" />
+</style>
+
+<style _tag="extratokens">
+<rule attr="display" value="if-relative" />
+</style>
+
+<style type="fixed">
+<rule attr="display" value="block" />
+</style>
+
+</stylesheet>

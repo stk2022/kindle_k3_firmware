@@ -1,0 +1,74 @@
+//
+// 
+// Copyright  1990-2006 Sun Microsystems, Inc. All Rights Reserved.
+// Copyright 2006 Sun Microsystems, Inc.   All rights reserved.
+// SUN PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
+//
+
+
+// Standard extensions get all permissions by default
+
+grant codeBase "file://${java.home}/lib/ext/*" {
+	permission java.security.AllPermission;
+};
+
+// default permissions granted to all domains
+
+grant { 
+	// allows anyone to listen on un-privileged ports
+	permission java.net.SocketPermission "localhost:1024-", "listen";
+
+	// "standard" properies that can be read by anyone
+
+	permission java.util.PropertyPermission "java.version", "read";
+	permission java.util.PropertyPermission "java.vendor", "read";
+	permission java.util.PropertyPermission "java.vendor.url", "read";
+	permission java.util.PropertyPermission "java.class.version", "read";
+	permission java.util.PropertyPermission "os.name", "read";
+	permission java.util.PropertyPermission "os.version", "read";
+	permission java.util.PropertyPermission "os.arch", "read";
+	permission java.util.PropertyPermission "file.separator", "read";
+	permission java.util.PropertyPermission "path.separator", "read";
+	permission java.util.PropertyPermission "line.separator", "read";
+
+	permission java.util.PropertyPermission "java.specification.version", "read";
+	permission java.util.PropertyPermission "java.specification.vendor", "read";
+	permission java.util.PropertyPermission "java.specification.name", "read";
+
+	permission java.util.PropertyPermission "java.vm.specification.version", "read";
+	permission java.util.PropertyPermission "java.vm.specification.vendor", "read";
+	permission java.util.PropertyPermission "java.vm.specification.name", "read";
+	permission java.util.PropertyPermission "java.vm.version", "read";
+	permission java.util.PropertyPermission "java.vm.vendor", "read";
+	permission java.util.PropertyPermission "java.vm.name", "read";
+
+	permission java.util.PropertyPermission "com.sun.apps.useSunRR", "read";
+	permission java.util.PropertyPermission "com.sun.apps.debugSunRR", "read";
+
+        // PBP's profile specific properties.  
+        // Should never be security constrained.
+
+        permission java.util.PropertyPermission "java.awt.AlphaComposite.SRC_OVER.isRestricted", "read"; 
+        permission java.util.PropertyPermission "java.awt.Graphics2D.setStroke.BasicStroke.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.Component.setCursor.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.Frame.setSize.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.Frame.setResizable.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.Frame.setLocation.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.Frame.setTitle.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.Frame.setUndecorated.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.event.MouseEvent.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.event.MouseEvent.supportLevel", "read";
+        permission java.util.PropertyPermission "java.awt.event.KeyEvent.isRestricted", "read";
+        permission java.util.PropertyPermission "java.awt.event.KeyEvent.supportMask", "read";
+        permission java.util.PropertyPermission "java.awt.keyEventCoalesce", "read"; 
+
+	permission java.util.PropertyPermission "java.awt.PaintLock", "read";
+	permission java.util.PropertyPermission "java.awt.logodisptime", "read";
+	permission java.util.PropertyPermission "java.awt.loadpic", "read";
+	permission java.util.PropertyPermission "java.awt.defaultlogoloc", "read";
+	permission java.util.PropertyPermission "java.awt.DefaultBackgroundColor", "read";
+
+	permission javax.microedition.xlet.ixc.IxcPermission "*", "bind";
+	permission javax.microedition.xlet.ixc.IxcPermission "*", "lookup";
+};
+

@@ -1,0 +1,2067 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   wan.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   06/02/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Mario platform WAN HAL layer for wan diagnostic scripts.  This file
+#   defines various HAL routines for wan power management as well
+#   as module information gathering routines.
+#
+#   This file contains a HAL for the Nell platform, which includes:
+#
+#   Important Variables
+#       WAN_PRL_VERSION             - Holds PRL Version of modem post wan_get_prl_version()
+#       WAN_MDN                     - Holds PRL Version of modem post wan_get_mdn()
+#       WAN_REALM                   - Holds PRL Version of modem post wan_get_realm()
+#       WAN_MSID                    - Holds PRL Version of modem post wan_get_msid()
+#       WAN_ESN                     - Holds ESN Number of modem post wan_get_esn()
+#       WAN_ICCID                   - Holds ICCID Number of modem post wan_get_iccid()
+#       WAN_MODULE_FIRMWARE_VERSION - Holds Wan Module FW Version post wan_get_module_version()
+#
+#   Important Constants
+#       WAN_POWER_OFF               - WAN power off
+#       WAN_POWER_ON                - WAN power on
+#       WAN_POWER_TPH               - WAN power tph sleep mode
+#       WAN_POWER_ON_TO_TPH         - WAN power tph sleep mode (from ON mode)
+#       WAN_PEER_QES                - WAN Peer is QES
+#       WAN_PEER_WHISPERNET_TWO     - WAN Peer is Whispernet 2
+#       WAN_PEER_ATT                - WAN Peer is AT&T
+#       WAN_PEER_QES_REALM          - WAN Realm associated with QES Peer
+#       WAN_PEER_QES_ROAM_REALM     - WAN Realm associated with QES Peer
+#       WAN_PEER_WHISPERNET_TWO_REALM - WAN Realm associated with Whispernet 2 Peer
+#       WAN_PEER_ATT_REALM          - WAN Realm associated with ATT Peer
+#       WAN_POWER_OFF_TIMEOUT       - Max time to wait for WAN power off
+#       WAN_POWER_ON_TIMEOUT        - Max time to wait for WAN power on 
+#       WAN_POWER_TPH_TIMEOUT       - Max time to wait for WAN to enter TPH mode
+#       WAN_INFO_READY_TIMEOUT      - Max time to wait for wan information to be returned
+#	WAN_RF_DISABLE_PROC_ENTRY   - Proc entry for enabling/disabling RF mode
+#
+#   Routines
+#       wan_enable_rf()             - Tell WAN module to enable RF mode
+#       wan_disable_rf()            - Tell WAN module to disable RF mode
+#       wan_power_inform_user()     - Inform user of WAN power operation in progress
+#       wan_info_power()            - Put the WAN into target power state using wand,
+#                                       informing the user of what's going on.  Wand is
+#                                       required to read module information.
+#       wan_power()                 - Put the WAN into target power state using wancontrol,
+#                                       informing the user of what's going on and verifying
+#                                       it worked before returning.
+#       wan_power_background()      - Same as wan_power, but issues wancontrol command in background
+#       wan_power_verify_fct()      - Wait for WAN to reach target power state, timing out if
+#                                       it takes too long
+#       wan_display_511_countdown() - Display countdown to start of 511 test
+#       wan_create_511_results_file - Creates the 511 results file
+#       wan_prep_and_export_511_status- Make and export via USB the 511 results file
+#       wan_display_511_pass_but_export_failed() - Display message that results export failed
+#       wan_display_511_results()   - Display the 511 pass/fail results
+#       wan_display_511_test_running- Display screen saying 511 test is running
+#       wan_511_test()              - Run the 511 test
+#
+#       wan_get_module_version()    - Get WAN Module version
+#       wan_get_iccid()             - Get ICCID from wan module
+#       wan_get_esn()               - Get ESN from wan module
+#       wan_get_msid()              - Get MSID from wan module
+#       wan_get_realm()             - Get REALM from wan module
+#       wan_get_mdn()               - Get MDN from wan module
+#       wan_get_peer()              - Get PEER from wan module
+#       wan_verify_peer()           - Given a peer, verify it has the right realm
+#       wan_get_peer_string()       - Get name of PEER give peer number
+#       wan_get_realm_from_peer()   - Get the realm value for a given peer
+#       wan_get_prl_version()       - Get prl version from wan module
+#       wan_type_to_name()          - Translate a wan type to a name string
+#       wan_get_type()              - Get WAN type from system
+#       wan_display_modem_info_timeout - Display timeout failure message waiting for WAN
+#       get_wan_module_information  - Collect up WAN module information
+#       wan_display_power_failure() - Display failure screen - wan power transition timeout
+#       wan_modem_info_test()       - Collect up and display modem info, ask user to verify
+#       
+#       wan_hal_init(void)          - Hal initialization routine
+#       wan_hal_exit(void)          - Hal teardown routine
+#
+######################################################################
+
+# USB Hal for exporting USB volume
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+# Device Settings HAL for get functions for pcb id and MAC address
+if [ "x$HAS_MAC_ADDRESS" == "x1" ]; then
+    [ -f ${_DEV_SETTINGS_HAL_FUNCTIONS} ] && . ${_DEV_SETTINGS_HAL_FUNCTIONS}
+fi
+
+#___________________________________________________________________
+#
+#   WAN Power Related Test Support Routines Start Here...
+#
+#___________________________________________________________________
+
+ 
+######################################################################
+# Function:     wan_disable_rf
+# Purpose:      Put the wan module into "RF disabled" mode.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wan_disable_rf()
+{
+	echo 0 > "$WAN_RF_DISABLE_PROC_ENTRY"
+}
+
+
+######################################################################
+# Function:     wan_enable_rf
+# Purpose:      Put the wan module into "RF enabled" mode.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wan_enable_rf()
+{
+	echo 1 > "$WAN_RF_DISABLE_PROC_ENTRY"
+}
+
+
+######################################################################
+# Function:     wan_power_inform_user
+# Purpose:      Put up a screen informing the user of the WAN power
+#               operation under way
+# Paramters:    mode - power mode to put WAN in; one of:
+#                   WAN_POWER_OFF,
+#                   WAN_POWER_ON,
+#                   WAN_POWER_TPH
+#               footer - print the full banner/footer; one of:
+#                   0 - Don't print the footer
+#                   1 - Print the entire screen
+# Returns:      none
+######################################################################
+wan_power_inform_user()
+{
+    MODE="$1"
+    PRINT_FOOTER=1
+    clear_screen
+    case "$MODE" in
+        $WAN_POWER_OFF)
+            ${DOUT} -n 12 4 "Powering the WAN off ..."
+            ;;
+        $WAN_POWER_ON)
+            ${DOUT} -n 12 4 "Powering the WAN on ..."
+            ;;
+        $WAN_POWER_TPH | $WAN_POWER_ON_TO_TPH)
+            ${DOUT} -n 10 4 "Putting WAN into TPH mode ..."
+            ;;
+        *)
+            ${DOUT} 8 4 "ERROR: UNKNOWN WAN POWER MODE $MODE"
+            PRINT_FOOTER=0
+            ;;
+    esac
+
+    if [ $PRINT_FOOTER -eq 1 ]; then
+        ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 8 7 "This could take up to 2 minutes."
+        ${DOUT} -n 8 9 "This screen will auto-dismiss once"
+        ${DOUT} 8 11 "the WAN power operation is complete."
+    fi
+}
+
+
+
+######################################################################
+# Function:     wan_info_power
+# Purpose:      Power the WAN module into one of its three power modes
+#               using wand so that we can make lipc calls to get modem
+#               information.
+# Paramters:    mode - power mode to put WAN module into.
+#                   One of WAN_POWER_OFF, WAN_POWER_ON, and WAN_POWER_TPH.
+#               display_status - flag to enable showing of status dialot
+#                   0 - Don't show status screen, 
+#                   1 - show status screen while wan power operation in progress,
+# Returns:      0 - success
+#               1 - timed out waiting on an operation
+######################################################################
+wan_info_power()
+{
+    vmsg "wan_info_power($1)"
+    MODE="$1"
+    SHOW_STATUS="$2"
+    case "$1" in
+
+        $WAN_POWER_OFF)
+            vmsg "Turning WAN power OFF..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_OFF
+            fi
+            wan_enable_rf
+
+            # Tell WAN to power off
+            do_local_echo "Setting WAN StopWan property to power OFF..."
+            START_TIME=`get_uptime`
+            lipc-set-prop $WAN_DBUS_ENTRYPOINT stopWan 0
+            _err=$?
+            if [ $_err -ne 0 ]; then
+                failure "lipc-set_prop $WAN_DBUS_ENTRYPOINT stopWan 0 returned $_err"
+                return 1
+            fi
+
+            # Wait for WAN to complete powering off
+            do_local_echo "Waiting for WAN to power off..."
+            _POWER_STATE=`lipc-get-prop $WAN_DBUS_ENTRYPOINT powerState`
+            _err=$?
+            if [ $_err -ne 0 ]; then
+                failure "lipc-get_prop $WAN_DBUS_ENTRYPOINT powerState returned $_err"
+                return 1
+            fi
+            while ! [ "x$WAN_POWER_STATE_OFF" == "x$_POWER_STATE" ]; do
+                CUR_TIME=`get_uptime`
+                let RUN_TIME=$CUR_TIME-$START_TIME
+                if [ $RUN_TIME -ge $WAN_POWER_OFF_TIMEOUT ]; then
+                    do_local_echo "WAN Power Off pstate = $_POWER_STATE"
+                    return 1
+                fi
+                sleep 1
+                _POWER_STATE=`lipc-get-prop $WAN_DBUS_ENTRYPOINT powerState`
+                _err=$?
+                if [ $_err -ne 0 ]; then
+                    failure "lipc-get_prop $WAN_DBUS_ENTRYPOINT powerState returned: $_err"
+                    return 1
+                fi
+            done
+            ;;    
+
+        $WAN_POWER_ON)
+            vmsg "Turning WAN power ON..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_ON
+            fi
+            wan_enable_rf
+
+            # Send WAN a message to turn on
+            do_local_echo "Setting WAN StartWan property to power ON..."
+
+            # I've seen it take 17 cycles through this (34 seconds) to ready itself
+            # if called right after diags launches (with lipc timeout problem, that is).
+
+            DONE=0
+            START_TIME=`get_uptime`
+            while [ $DONE -ne 1 ]; do
+                lipc-set-prop $WAN_DBUS_ENTRYPOINT startWan 1
+                _err=$?
+                if [ $_err -ne 0 ]; then
+                    CUR_TIME=`get_uptime`
+                    let RUN_TIME=$CUR_TIME-$START_TIME
+                    if [ $RUN_TIME -ge $WAN_STARTWAN_POWERON_TIMEOUT ]; then
+                        failure "lipc-set-prop $WAN_DBUS_ENTRYPOINT startWan returned $_err"
+                        return 1
+                    fi
+                    sleep 1
+                else
+                    DONE=1
+                fi
+            done
+
+
+            # Loop waiting for WAN to get powered on
+            do_local_echo "Waiting for WAN to power on..."
+            START_TIME=`get_uptime`
+            DONE=0
+            while [ $DONE -ne 1 ]; do
+                _POWER_STATE=`lipc-get-prop $WAN_DBUS_ENTRYPOINT powerState`
+                _err=$?
+                if [ $_err -ne 0 ]; then
+                    failure "lipc-get-prop $WAN_DBUS_ENTRYPOINT powerState returned error $_err"
+                    return 1
+                fi
+                if [ "x$WAN_POWER_STATE_ON" == "x$_POWER_STATE" ]; then
+                    DONE=1
+                else
+                    CUR_TIME=`get_uptime`
+                    let RUN_TIME=$CUR_TIME-$START_TIME
+                    if [ $RUN_TIME -ge $WAN_POWER_ON_TIMEOUT ]; then
+                        # failure reported for this by caller
+                        do_local_echo "Timed out waiting for WAN to power ON"
+                        return 1
+                    fi
+                    sleep 1
+                fi
+            done
+            export WAN_NEVER_POWERED=0
+            ;;    
+
+        $WAN_POWER_TPH | $WAN_POWER_ON_TO_TPH)
+            vmsg "Turning WAN power to TPH sleep mode..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_TPH
+            fi
+
+            do_local_echo "Sending WAN the readyToSuspend event..."
+            START_TIME=`get_uptime`
+            lipc-send-event $POWERD_DBUS_ENTRYPOINT readyToSuspend
+            _err=$?
+            if [ $_err -ne 0 ]; then
+                failure "lipc-send_event $POWERD_DBUS_ENTRYPOINT readyToSuspend returned $_err"
+                return 1
+            fi
+
+            # Loop waiting for WAN to go to tph mode
+            do_local_echo "Waiting for WAN to power into TPH mode..."
+            DONE=0
+            while [ $DONE -ne 1 ]; do
+                _POWER_STATE=`lipc-get-prop $WAN_DBUS_ENTRYPOINT powerState`
+                _err=$?
+                if [ $_err -ne 0 ]; then
+                    failure "lipc-get_prop $WAN_DBUS_ENTRYPOINT powerState returned: $_err"
+                    return 1
+                fi
+                if [ "x$WAN_POWER_STATE_ASLEEP" == "x$_POWER_STATE" ]; then
+                    DONE=1
+                else
+                    CUR_TIME=`get_uptime`
+                    let RUN_TIME=$CUR_TIME-$START_TIME
+                    if [ $RUN_TIME -ge $WAN_POWER_TPH_TIMEOUT ]; then
+                        # Failure reported by caller
+                        do_local_echo "Timed out waiting for WAN to go to TPH mode"
+                        return 1
+                    fi
+                    sleep 1
+                fi
+            done
+            export WAN_NEVER_POWERED=0
+
+            # Disable RF for instant sleep....
+            wan_disable_rf
+            ;;    
+ 
+        *)
+            do_local_echo "wan_info_power(): ERROR - unknown WAN power mode $1"
+            ;;    
+
+    esac
+
+    return 0
+}
+
+
+######################################################################
+# Function:     wan_power_background
+# Purpose:      Power the WAN module into one of its three power modes.
+#               Issue the command in the background to allow returning
+#               immediately.
+# Paramters:    mode - power mode to put WAN module into.
+#                   One of WAN_POWER_OFF, WAN_POWER_ON, and WAN_POWER_TPH.
+#               display_status - flag to enable showing of status dialot
+#                   0 - Don't show status screen, 
+#                   1 - show status screen while wan power operation in progress,
+# Returns:      none
+######################################################################
+wan_power_background()
+{
+    vmsg "wan_power_background($1,$2)"
+    MODE="$1"
+    SHOW_STATUS="$2"
+    case "$1" in
+
+        $WAN_POWER_OFF)
+            vmsg "Turning WAN power OFF in background..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_OFF
+            fi
+            wan_enable_rf
+            ${RUN_WAN_POWER_OFF} > /dev/null 2>&1 &
+            ;;    
+
+        $WAN_POWER_ON)
+            vmsg "Turning WAN power ON in background..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_ON
+            fi
+            wan_enable_rf
+            ${RUN_WAN_POWER_ON} > /dev/null 2>&1 &
+            ;;    
+
+        $WAN_POWER_TPH)
+            vmsg "Turning WAN power to TPH sleep mode in background..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_TPH
+            fi
+            ${RUN_WAN_POWER_TPH} > /dev/null 2>&1 &
+            wan_disable_rf
+            ;;    
+
+        $WAN_POWER_ON_TO_TPH)
+            vmsg "Turning WAN power to TPH sleep mode in background..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_ON_TO_TPH
+            fi
+            ${RUN_WAN_POWER_ON_TO_TPH} > /dev/null 2>&1 &
+            wan_disable_rf
+            ;;    
+
+        *)
+            do_local_echo "wan_power_background(): ERROR - unknown WAN power mode $1"
+            ;;    
+
+    esac
+}
+
+
+######################################################################
+# Function:     wan_power_cycle_modem
+# Purpose:      Power-cycle the modem.  First time modem is powered,
+#               WAN driver waits 20 seconds.  We do this power cycle to
+#               eat that 1-time 20 second wait.
+# Parameters:   none
+# Returns:      0 - Power cycle successful
+#               1 - failure
+######################################################################
+wan_power_cycle_modem()
+{
+    wan_power $WAN_POWER_ON 0
+    _err=$?
+    if [ ${_err} -eq 0 ]; then
+        wan_power $WAN_POWER_OFF 0
+        _err=$?
+    fi
+    if [ ${_err} -eq 0 ]; then
+        export WAN_NEVER_POWERED=0
+    fi
+    return ${_err}
+}
+
+
+######################################################################
+# Function:     wan_power
+# Purpose:      Power the WAN module into one of its three power modes.
+# Paramters:    mode - power mode to put WAN module into.
+#                   One of WAN_POWER_OFF, WAN_POWER_ON, and WAN_POWER_TPH.
+#               display_status - flag to enable showing of status dialot
+#                   0 - Don't show status screen, 
+#                   1 - show status screen while wan power operation in progress,
+# Returns:      0 - wan transitioned power state properly
+#               1 - failed to transition power state properly
+######################################################################
+wan_power()
+{
+    vmsg "wan_power($1)"
+    MODE="$1"
+    SHOW_STATUS="$2"
+    case "$1" in
+
+        $WAN_POWER_OFF)
+            vmsg "Turning WAN power OFF..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_OFF
+            fi
+            wan_enable_rf
+            ${RUN_WAN_POWER_OFF}
+            _status=$?
+            ;;    
+
+        $WAN_POWER_ON)
+            vmsg "Turning WAN power ON..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_ON
+            fi
+            wan_enable_rf
+            ${RUN_WAN_POWER_ON}
+            _status=$?
+            export WAN_NEVER_POWERED=0
+            ;;    
+
+        $WAN_POWER_ON_TO_TPH)
+            vmsg "Turning WAN power to TPH sleep mode..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_TPH
+            fi
+            ${RUN_WAN_POWER_ON_TO_TPH}
+            _status=$?
+            wan_disable_rf
+            ;;    
+
+
+        $WAN_POWER_TPH)
+            vmsg "Turning WAN power to TPH sleep mode..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wan_power_inform_user $WAN_POWER_TPH
+            fi
+            ${RUN_WAN_POWER_TPH}
+            _status=$?
+            wan_disable_rf
+            ;;    
+
+        *)
+            do_local_echo "wan_power(): ERROR - unknown WAN power mode $1"
+            _status=1
+            ;;    
+
+    esac
+    return $_status
+}
+
+
+######################################################################
+# Function:     wan_power_verify_fct
+# Purpose:      Verify wan operation is complete by waiting for wancontrol
+#               to finish.
+# Paramters:    mode - power mode to put WAN module into.
+#                   One of WAN_POWER_OFF, WAN_POWER_ON, and WAN_POWER_TPH.
+# Returns:      0 - WAN has reached target power mode
+#               1 - WAN timed out waiting to reach target power mode
+######################################################################
+wan_power_verify_fct()
+{
+    # If wancontrol is still running, wait for it to complete...
+    START_TIME=`get_uptime`
+    process_running wancontrol > /dev/null 2>&1
+    WC_RUNNING=$?
+    if [ $WC_RUNNING -ne 0 ]; then
+        case "$1" in
+            $WAN_POWER_ON)
+                _timeout=$WAN_POWER_ON_TIMEOUT
+                ;;
+            $WAN_POWER_OFF)
+                _timeout=$WAN_POWER_OFF_TIMEOUT
+                ;;
+            $WAN_POWER_ON_TO_TPH | $WAN_POWER_TPH)
+                _timeout=$WAN_POWER_TPH_TIMEOUT
+                ;;
+            *)
+                ;;
+        esac
+
+        while [ $WC_RUNNING -ne 0 ]; do
+            sleep 1
+            process_running wancontrol > /dev/null 2>&1
+            WC_RUNNING=$?
+            if [ $WC_RUNNING -ne 0 ]; then
+                CUR_TIME=`get_uptime`
+                let RUN_TIME=$CUR_TIME-$START_TIME
+                if [ $RUN_TIME -ge $_timeout ]; then
+                    do_local_echo "wan_power_verify_fct timed out"
+                    return 1
+                fi
+            fi
+        done
+    fi
+
+    # If we were waiting for TPH mode, disable rf (again) as the original
+    # call may have disabled it before wancontrol actually got into TPH mode,
+    # so we need to re-do it here....
+    #
+    if [ $1 -eq $WAN_POWER_TPH ] || [ $1 -eq $WAN_POWER_ON_TO_TPH ]; then
+        wan_disable_rf
+    fi
+    return 0
+}
+
+#___________________________________________________________________
+#
+#   WAN 511 Test Support Routines Start Here...
+#
+#___________________________________________________________________
+#
+
+######################################################################
+# Function:     wan_display_511_countdown
+# Purpose:      Display a countdown timer that counts down the time
+#               remaining before we start the 511 test.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wan_display_511_countdown()
+{
+    # Give the user some time to put device into cage...
+    time_left=$WAN_511_PREWAIT_SECONDS
+    clear_screen
+    ${DOUT} -n 17 4 "WAN 511 Test"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 8 7 "Put the device into the cage now."
+
+    # Wait for timeout
+    while [ "$time_left" -gt 0 ]; do
+        ${DOUT} 8 9 "Test will start in $time_left seconds..."
+        sleep 1
+        let time_left-=1
+        erase_line 9
+    done
+}
+
+
+######################################################################
+# Function:     wan_create_511_results_file
+# Purpose:      Creates a 511 results file by writing out the various
+#               module parameters to the 511 output file
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Creates the $WAN_511_RESULTS_OUTPUT_FILE
+######################################################################
+wan_create_511_results_file()
+{
+    wan_is_gsm
+    if [ "$?" -eq 1 ]; then
+        _WAN_ID=$WAN_ICCID
+    else
+        _WAN_ID=$WAN_ESN
+    fi
+
+    # Create the results file
+    echo "$DEVICE_SERIAL_NUMBER,$_WAN_ID ,$WAN_MDN,$WAN_MSID,$WAN_PRL_VERSION,$WAN_MODULE_FIRMWARE_VERSION,$WAN_REALM" > "$WAN_511_RESULTS_OUTPUT_FILE"
+}
+
+
+######################################################################
+# Function:     display_wan_peer_realm_failure
+# Purpose:      Display a failure screen explaining that the WAN peer
+#               does not match the WAN realm.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Waits for user to ack before returning
+######################################################################
+display_wan_peer_realm_failure()
+{
+    _WAN_PEER_STRING=`wan_get_peer_string $WAN_PEER`
+    _EXPECTED_REALM=`wan_get_realm_from_peer "$WAN_PEER"`
+
+    clear_screen
+    banner="WAN Peer Realm Verification"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    ${DOUT} -n 8 7 "The WAN realm does not match the WAN peer."
+    ${DOUT} -n 8 10 "WAN Peer  : $_WAN_PEER_STRING ($WAN_PEER)"
+    ${DOUT} -n 8 12 "WAN Realm : $WAN_REALM (expected $_EXPECTED_REALM)"
+    ${DOUT} 8 15 "Press $EXIT_KEY_LABEL to continue."
+    wait_for_key $EXIT_KEY
+}
+
+# add those functions here because device setting includes this
+# script and this script needs to include the device setting
+# script to get these functions.  It becomes an infinite loop.
+
+dev_get_pcb_id()
+{
+    export DEVICE_PCB_ID=`idme --pcbsn ?`
+}
+                                       
+                                        
+dev_get_manuf_code()
+{
+    export DEVICE_MANUF_CODE=`idme --mfg "?"`
+}
+
+dev_get_mac_address()
+{
+    export DEVICE_MAC_ADDRESS=`idme --mac "?"`
+}
+
+dev_get_serial_number()
+{
+    export DEVICE_SERIAL_NUMBER=`idme --serial ?`
+}
+                                                                    
+######################################################################ddress()
+# Function:     wan_prep_and_export_511_status
+# Purpose:      Rename the resulting 511.log file to prepend the product
+#               name, copy that file to the export volume, and export
+#               the 511 results on the USB export volume so that they
+#               can be copied off the device by the operator.
+# Paramters:    none
+# Returns:      0 - File exported properly
+#               1 - File didn't get copied or exported properly
+######################################################################
+wan_prep_and_export_511_status()
+{
+    # Rename file to include product name
+    mv "${WAN_511_RESULTS_TMP_FILE}" "${WAN_511_RESULTS_OUTPUT_FILE}"
+
+    # Append the MAC address and pcba number, if MAC address is supported
+    if [ "x$HAS_MAC_ADDRESS" == "x1" ]; then
+        dev_get_mac_address
+        echo -n ",$DEVICE_MAC_ADDRESS" >> "${WAN_511_RESULTS_OUTPUT_FILE}"
+        dev_get_manuf_code
+        echo -n ",$DEVICE_MANUF_CODE" >> "${WAN_511_RESULTS_OUTPUT_FILE}"
+        dev_get_pcb_id
+        echo ",$DEVICE_PCB_ID" >> "${WAN_511_RESULTS_OUTPUT_FILE}"
+    fi
+            
+    # Copy the file to the FAT partition and export it...
+    usb_copy_to_export_volume "$WAN_511_RESULTS_OUTPUT_FILE" "$WAN_511_RESULTS_FILENAME"
+    copy_failed="$?"
+    if [ "$copy_failed" -eq 0 ]; then
+        export_usb_volumes
+        return 0
+    else
+        clear_screen
+        ${DOUT} -n 17 4 "WAN 511 Test"
+        ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 8 7 "Failed to copy 511 results file to"
+        ${DOUT} -n 8 9 "the USB export volume because"
+        if [ $copy_failed -eq 1 ]; then
+            ${DOUT} -n 8 11 "$USB_EXPORT_VOLUME is missing."
+        else
+            ${DOUT} -n 8 11 "$WAN_511_RESULTS_OUTPUT_FILE is missing."
+        fi
+        ${DOUT} 8 14 "Press $EXIT_KEY_LABEL to continue."
+        wait_for_key $EXIT_KEY
+        return 1
+    fi
+}
+
+
+wan_prep_and_export_wfo_status()
+{
+    dev_get_serial_number
+    echo "$DEVICE_SERIAL_NUMBER" >  "${WAN_511_RESULTS_OUTPUT_FILE}"
+        
+    # Append the MAC address and pcba number, if MAC address is supported
+    if [ -n "$HAS_MAC_ADDRESS" ] && [ $HAS_MAC_ADDRESS -eq 1 ]; then
+        dev_get_mac_address
+        echo -n ",$DEVICE_MAC_ADDRESS" >> "${WAN_511_RESULTS_OUTPUT_FILE}"
+        dev_get_manuf_code
+        echo -n ",$DEVICE_MANUF_CODE" >> "${WAN_511_RESULTS_OUTPUT_FILE}"
+        dev_get_pcb_id
+        echo ",$DEVICE_PCB_ID" >> "${WAN_511_RESULTS_OUTPUT_FILE}"
+    else
+        echo "HAS_WIFI = $HAS_WIFI, HAS_MAC_ADDRESS = $HAS_MAC_ADDRESS"
+    fi
+
+    # Copy the file to the FAT partition and export it...
+    usb_copy_to_export_volume "$WAN_511_RESULTS_OUTPUT_FILE" "$WAN_511_RESULTS_FILENAME"
+    copy_failed="$?"
+    if [ "$copy_failed" -eq 0 ]; then
+        export_usb_volumes
+        return 0
+    else
+        clear_screen
+        ${DOUT} -n 17 4 "WAN 511 Test"
+        ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 8 7 "Failed to copy 511 results file to"
+        ${DOUT} -n 8 9 "the USB export volume because"
+        if [ $copy_failed -eq 1 ]; then
+            ${DOUT} -n 8 11 "$USB_EXPORT_VOLUME is missing."
+        else
+            ${DOUT} -n 8 11 "$WAN_511_RESULTS_OUTPUT_FILE is missing."
+        fi
+        ${DOUT} 8 14 "Press $EXIT_KEY_LABEL to continue."
+        wait_for_key $EXIT_KEY
+        return 1
+    fi
+                                                                                                                                                        
+}                                                                                                                                                                                                                                  
+
+#####################################################################
+# Function:     wan_display_511_pass_but_export_failed
+# Purpose:      Displays the dialog explaining that the 511 test passed,
+#               but that we failed to copy and/or export the file on
+#               the exported USB volume.
+# Paramters:    1 - Couldn't find source file
+#               2 - Couldn't find USB export volume
+# Returns:      none
+######################################################################
+wan_display_511_pass_but_export_failed()
+{
+    reason="$1"
+    clear_screen
+    ${DOUT} -n 14 4 "WAN 511 Test Results"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 17 9 "FAILED"
+
+    case "$reason" in
+        1)
+            ${DOUT} -n 8 11 "The 511 test passed, but could not find"
+            ${DOUT} -n 8 13 "$WAN_511_RESULTS_OUTPUT_FILE results file to export."
+            ;;
+        2)
+            ${DOUT} -n 8 11 "The 511 test passed, but could not find"
+            ${DOUT} -n 8 13 "$USB_EXPORT_VOLUME to copy file to."
+            ;;
+        *)
+            ${DOUT} -n 8 11 "Unknown test result $reason"
+            ;;
+    esac
+    ${DOUT} 8 16 "Press $EXIT_KEY_LABEL to exit the WAN 511 test."
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     wan_display_gsm_test_results
+# Purpose:      Displays the PASS/FAIL result of the loopback call test
+#               or the GSM 1900 band test
+# Paramters:    test_id - id of the test that was run
+#                   1 - Originate Loopback Call
+#                   2 - GSM 1900 Band
+# Returns:      none
+######################################################################
+wan_display_gsm_test_results()
+{
+    _test_failed="$1"
+    _test_id="$2"
+    _banner=""
+    case "$_test_id" in
+        1)
+            _banner="Originate Call Test Results"
+            ;;
+        2)
+            _banner="GSM 1900 Band Test Results"
+            ;;
+        *)
+            echo "Unknown test id $_test_id"
+            return 1
+            ;;
+    esac
+
+    # Center banner
+    clear_screen
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$_banner" 8 "$base"
+    ${DOUT} -n $? 4 "$_banner"
+    ${DOUT} -n 8 5 "$base"
+    case "$_test_failed" in
+        0)
+            center_text "PASSED" 8 "$base"
+            ${DOUT} -n $? 9 "PASSED"
+            ;;
+        1)
+            center_text "FAILED" 8 "$base"
+            ${DOUT} -n $? 9 "FAILED"
+            ;;
+        *)
+            ${DOUT} -n 8 9 "Unknown test result $_test_failed"
+            ;;
+    esac
+    msg="Press $EXIT_KEY_LABEL to exit test."
+    center_text "$msg" 8 "$base"
+    ${DOUT} $? 13 "$msg"
+    wait_for_key $EXIT_KEY
+}
+
+ 
+######################################################################
+# Function:     wan_display_511_results
+# Purpose:      Displays the PASS/FAIL result of the 511 test
+# Paramters:    TEST_FAILED - results of 511 test; one of:
+#                   0 - Test Passed
+#                   1 - Test Failed
+# Returns:      none
+######################################################################
+wan_display_511_results()
+{
+    TEST_FAILED="$1"
+    clear_screen
+
+    # Center banner
+    banner="WAN 511 Test Results"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    case "$TEST_FAILED" in
+        0)
+            center_text "PASSED" 8 "$base"
+            ${DOUT} -n $? 7 "PASSED"
+            ${DOUT} -n 6 11 "Copy the $WAN_511_RESULTS_FILENAME file from the"
+            ${DOUT} -n 6 13 "host machines /media/Kindle directory now."
+
+            ${DOUT} -n 6 17 "Test RF now while WAN is powered."
+
+            ${DOUT} -n 6 21 "Press $EXIT_KEY_LABEL to exit the 511 test once the"
+            ${DOUT} -n 6 23 "file has been copied off the device and"
+            ${DOUT} 6 25 "the RF test has been performed."
+            ;;
+        1)
+            center_text "FAILED" 8 "$base"
+            ${DOUT} -n $? 9 "FAILED"
+            ${DOUT} 8 13 "Press $EXIT_KEY_LABEL to exit the WAN 511 test."
+            ;;
+        *)
+            ${DOUT} -n 8 9 "Unknown test result $TEST_FAILED"
+            ${DOUT} 8 13 "Press $EXIT_KEY_LABEL to exit the WAN 511 test."
+            ;;
+    esac
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     wan_display_511_test_running
+# Purpose:      Display message telling user we're running the 511 test.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wan_display_511_test_running()
+{
+    # Display information to the user
+    clear_screen
+    ${DOUT} -n 17 4 "WAN 511 Test"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 8 7 "Running the 511 test."
+    ${DOUT} 8 9 "This takes about 15 seconds to complete."
+}
+
+
+######################################################################
+# Function:     wan_display_battery_low
+# Purpose:      Display message telling user we're running the 511 test.
+# Paramters:    level - current battery level
+# Returns:      1 - Operator wants to still run 511 test
+#               0 - Operator wants to cancel request for 511 test
+######################################################################
+wan_display_battery_low()
+{
+    _CUR_LEVEL="$1" 
+
+    # Display information to the user
+    clear_screen
+    ${DOUT} -n 17 4 "WAN 511 Test"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 6 7 "WARNING : The current battery charge level"
+    ${DOUT} -n 6 9 "of $_CUR_LEVEL is below recommended level of $WAN_511_BATTERY_LEVEL."
+    ${DOUT} -n 6 13 "Press $SUCCESS_KEY_LABEL to continue 511 test."
+    ${DOUT} 6 15 "Press $EXIT_KEY_LABEL to abort 511 test."
+    while [ 1 -eq 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        if [ $? -eq 0 ]; then
+            case "$KEY" in
+                $SUCCESS_KEY)
+                    return 1
+                    ;;
+
+                $EXIT_KEY)
+                    return 0
+                    ;;
+
+                *)
+                    ;;
+            esac
+        fi
+    done
+}
+
+
+do_wan_factory_test()
+{
+    _test_id=$1
+
+    case "$_test_id" in
+        1)
+            banner="WAN Originate Call Test"
+            msg="Running the Originate Call test..."
+            base_test="WAN Originate Call Test"
+            ;;
+        2)
+            banner="WAN GSM 1900 Band Test"
+            msg="Running the GSM 1900 band test..."
+            base_test="WAN GSM 1900 Band Test"
+            ;;
+        *)
+            echo "Unknown factory test $_test_id"
+            return 1
+            ;;
+    esac
+
+    # Display information to the user
+    clear_screen
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    ${DOUT} -n 8 7 "$msg"
+    new_msg="Press $EXIT_KEY_LABEL when callbox indicates test complete."
+    center_text "$new_msg" 8 "$base"
+    ${DOUT} $? 11 "$new_msg"
+
+    # Fire up the test...
+    DONE=0
+    ERR=-1
+    lipc-set-prop com.lab126.wan factoryTest "$_test_id"
+    while [ $DONE -ne 1 ] && [ $ERR -ne 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT 1000`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            case "$KEY" in
+                $EXIT_KEY)
+                    DONE=1
+                  ;;
+
+                *)
+                    vmsg "Wrong key $Key pressed"
+                    ;;
+            esac
+        fi
+        ERR=`lipc-get-prop com.lab126.wan factoryTestState`
+    done
+
+    # turn off the wan now....
+    wan_power_inform_user $WAN_POWER_OFF
+    lipc-set-prop com.lab126.wan stopFactoryTest "$_test_id"
+    result=`lipc-wait-event com.lab126.wan powerStateChanged`
+    while [ $result -ne 0 ]; do
+        echo "WAN returned $result waiting for power off (expected 0)"
+        result=`lipc-wait-event com.lab126.wan powerStateChanged`
+    done
+    clear_screen
+
+
+    # Check for error
+    if [ $DONE -ne 1 ]; then
+        RES_STRING="$base_test factoryTestState=$ERR"
+        failure "$RES_STRING"
+        TEST_FAILED=1
+    else
+        success "$base_test"
+        TEST_FAILED=0
+    fi
+
+    # Inform the user of the results
+    wan_display_gsm_test_results $TEST_FAILED "$_test_id"
+
+    # If the test passed, prepare the results file and export it...
+    return $TEST_FAILED
+}
+
+
+
+######################################################################
+# Function:     wan_molb_test
+# Purpose:      Power up the WWAN module and initiate a loopback call.
+#               If the call is not successful on first try, call again
+#               until successful, up to 5 tries.
+#               Maintain the call until it is ended by callbox equipment.
+#               Power down WAN module and exit when the exit key is
+#               pressed.
+# Paramters:    none
+# Returns:      0 - test succeeded
+#               1 - test failed
+# Side Effect:  Clears the SUB_TEST_PASSED variable on failure
+######################################################################
+wan_molb_test()
+{
+    do_wan_factory_test 1
+    return $?
+}
+
+
+######################################################################
+# Function:     wan_gsm_1900_test
+# Purpose:      Power up the WWAN module and initiate a GSM 1900 Band call.
+#               If the call is not successful on first try, call again
+#               until successful, up to 5 tries.
+#               Maintain the call until it is ended by callbox equipment.
+#               Power down WAN module and exit when the exit key is
+#               pressed.
+# Paramters:    none
+# Returns:      0 - test succeeded
+#               1 - test failed
+# Side Effect:  Clears the SUB_TEST_PASSED variable on failure
+######################################################################
+wan_gsm_1900_test()
+{
+    do_wan_factory_test 2
+    return $?
+}
+
+
+######################################################################
+# Function:     wan_511_test
+# Purpose:      Tell the system to execute the WAN 511 test.
+# Paramters:    operator_verify 
+#                   1 to run in cycle (no operator verify) mode
+#                   0 to run in operator verify mode
+# Returns:      0 - test succeeded
+#               1 - test failed
+#               2 - test canceled, battery too low
+# Side Effect:  Clears the SUB_TEST_PASSED variable on failure
+######################################################################
+wan_511_test()
+{
+    # Running in auto mode or not?
+    NO_OPERATOR_VERIFY=$1
+    TEST_FAILED=0
+
+    # Display the "Test Starting in x..." countdown screen
+    # wan_display_511_countdown
+
+    # Check if we have enough battery juice, warn operator if we don't
+    if [ "x$REQUIRE_WAN_511_POWER" == "x1" ]; then
+        BATTERY_LEVEL=`${BATTERY_CAPACITY} | sed s/\%//g` > /dev/null 2>&1
+        if [ $BATTERY_LEVEL -lt $WAN_511_BATTERY_LEVEL ]; then
+            wan_display_battery_low $BATTERY_LEVEL 
+            if [ $? -eq 0 ]; then
+                # Operator wants to cancel test request
+                return 2
+            fi
+        fi
+    fi
+    
+    # Run the 511 test
+    wan_display_511_test_running
+
+    # Setup a loop waiting for wand to become ready.  If it's not ready, we'll
+    # get an error back from the set-prop command.  Wait for wand to ready, 
+    # timing out if it never readies.
+    # I've seen it take 17 cycles through this (34 seconds) to ready itself
+    # if called right after diags launches (with lipc timeout problem, that is).
+    TIMEOUT=40
+    DONE=0
+    while [ $DONE -ne 1 ]; do
+        lipc-set-prop com.lab126.wan factoryTest 0
+        _err=$?
+        if [ $_err -ne 0 ]; then
+            if [ $TIMEOUT -eq 0 ]; then
+                failure "lipc-set-prop $WAN_DBUS_ENTRYPOINT factoryTest 0 returned $_err"
+                return 1
+            fi
+            sleep 2
+            let TIMEOUT--
+        else
+            DONE=1
+        fi
+    done
+
+    if [ `lipc-wait-event com.lab126.wan factoryTestFinished` -eq 0 ]; then
+            failure "WAN 511 Test"
+            TEST_FAILED=1
+    fi
+        
+    # If the test passed, prepare the results file and export it...
+    if [ $TEST_FAILED -ne 1 ]; then
+        wan_prep_and_export_511_status
+        if [ "$?" -eq 0 ]; then
+            wan_display_511_results $TEST_FAILED
+            un_export_usb_volumes
+            usb_delete_from_export_volume "$WAN_511_RESULTS_FILENAME"
+        else
+            wan_display_511_pass_but_export_failed
+        fi
+
+        # turn off the wan now....
+        wan_power_inform_user $WAN_POWER_OFF
+        lipc-set-prop com.lab126.wan stopFactoryTest 0
+        result=`lipc-wait-event com.lab126.wan powerStateChanged`
+        while [ $result -ne 0 ]; do
+            echo "WAN returned $result waiting for power off (expected 0)"
+            result=`lipc-wait-event com.lab126.wan powerStateChanged`
+        done
+        clear_screen
+        success "WAN 511 Test"
+    else
+        # Inform the user of the results
+        wan_display_511_results $TEST_FAILED
+        failure "WAN 511 Test"
+    fi
+
+    return $TEST_FAILED 
+}
+
+
+#___________________________________________________________________
+#
+#   WAN Module Information Test Support Routines Start Here...
+#
+#___________________________________________________________________
+#
+
+
+######################################################################
+# Function:     wan_get_module_version
+# Purpose:      Get the WAN module's firmware version from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting firmware version
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's firmware version
+# Side Effects: Sets the WAN_MODULE_FIRMWARE_VERSION global variable
+######################################################################
+wan_get_module_version()
+{
+    export WAN_MODULE_FIRMWARE_VERSION=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioFirmwareVersion`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_module_version() returning $WAN_MODULE_FIRMWARE_VERSION"
+        do_local_echo "Module Version: $WAN_MODULE_FIRMWARE_VERSION"
+    else
+        do_local_echo "Error $RETVAL getting module version from WAN module"
+        export WAN_MODULE_FIRMWARE_VERSION="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wan_get_iccid
+# Purpose:      Get the ICCID number from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting ICCID number
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's ICCID number
+# Side Effects: Sets the WAN_ICCID global variable
+######################################################################
+wan_get_iccid()
+{
+    WAN_ICCID=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioCertParam1`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_iccid() returning $WAN_ICCID"
+        do_local_echo "WAN ICCID: $WAN_ICCID"
+    else
+        do_local_echo "Error $RETVAL getting ICCID from WAN module"
+        WAN_ICCID="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wan_get_esn
+# Purpose:      Get the ESN number from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting ESN number
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's ESN number
+# Side Effects: Sets the WAN_ESN global variable
+######################################################################
+wan_get_esn()
+{
+    WAN_ESN=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioSerialNumber`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_esn() returning $WAN_ESN"
+        do_local_echo "WAN ESN: $WAN_ESN"
+    else
+        do_local_echo "Error $RETVAL getting ESN from WAN module"
+        WAN_ESN="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wan_get_msid
+# Purpose:      Get the MSID from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting MSID number
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's MSID number
+# Side Effects: Sets the WAN_MSID global variable
+######################################################################
+wan_get_msid()
+{
+    WAN_MSID=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioImsi`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_imsi() returning $WAN_MSID"
+        do_local_echo "WAN MSID: $WAN_MSID"
+    else
+        do_local_echo "Error $RETVAL getting MSID from WAN module"
+        WAN_MSID="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wan_get_realm
+# Purpose:      Get the Realm (HDR NAI) from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting Realm number
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's Realm number
+# Side Effects: Sets the WAN_REALM global variable
+######################################################################
+wan_get_realm()
+{
+    WAN_REALM=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioRealm`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_realm() returning $WAN_REALM"
+        do_local_echo "WAN Realm: $WAN_REALM"
+    else
+        do_local_echo "Error $RETVAL getting Realm from WAN module"
+        WAN_REALM="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wan_get_mdn
+# Purpose:      Get the MDN (modem number) from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting MDN number
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's MDN number
+# Side Effects: Sets the WAN_MDN global
+######################################################################
+wan_get_mdn()
+{
+    WAN_MDN=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioPhoneNumber`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_mdn() returning $WAN_MDN"
+        do_local_echo "WAN MDN: $WAN_MDN"
+    else
+        do_local_echo "Error $RETVAL getting MDN from WAN module"
+        WAN_MDN="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wan_get_peer
+# Purpose:      Get the PEER (network type) from the WAN module
+# Paramters:    none
+# Returns:      none
+# Side Effects: Sets the WAN_PEER global
+######################################################################
+wan_get_peer()
+{
+    if [ -f "/var/local/wan/info" ]; then
+        source "/var/local/wan/info"
+    else
+        do_local_echo "WAN info file not found in wan_get_peer()"
+    fi
+    do_local_echo "WAN PEER: $WAN_PEER"
+    vmsg "wan_get_peer() returning $WAN_PEER"
+}
+
+
+######################################################################
+# Function:     wan_verify_peer
+# Purpose:      Given a WAN peer, verify that it has the right realm
+# Paramters:    peer - The WAN peer for the device.  One of:
+#                   WAN_PEER_QES            - Peer is QES
+#                   WAN_PEER_WHISPERNET_TWO - Peer is Whispernet 2
+#                   WAN_PEER_ATT            - Peer is AT&T
+#               realm - the realm read from the WAN module
+# Returns:      0 - Peer verified OK
+#               1 - Peer is invalid
+######################################################################
+wan_verify_peer()
+{
+    _PEER="$1"
+    _REALM="$2"
+    _FAILED=0
+    case "$_PEER" in
+        $WAN_PEER_QES)
+            if ! [ "$_REALM" == "$WAN_PEER_QES_REALM" ]; then
+            	if ! [ "$_REALM" == "$WAN_PEER_QES_ROAM_REALM" ]; then
+                	_FAILED=1
+		fi
+            fi
+            ;;
+
+        $WAN_PEER_WHISPERNET_TWO)
+            echo "$_REALM" | grep -i "$WAN_PEER_WHISPERNET_TWO_REALM"
+            if [ "$?" -eq 1 ]; then
+                _FAILED=1
+            fi
+            ;;
+
+        $WAN_PEER_ATT)
+            if ! [ "$_REALM" == "$WAN_PEER_ATT_REALM" ]; then
+                _FAILED=1
+            fi
+            ;;
+
+        *)
+            _FAILED=1
+            ;;
+    esac
+    return $_FAILED
+}
+
+
+######################################################################
+# Function:     wan_get_peer_string
+# Purpose:      Given a number representing a peer, return the string
+#               name of the peer.
+# Paramters:    Peer number.  One of:
+#                   1 - QES
+#                   2 - Whispernet 2
+#                   3 - AT&T
+#                   4 - Vodafone
+# Returns:      none
+# Side Effects: Echo's the name of the carrier, or "Unknown" if parameter
+#               was not a 1, 2, or 3.
+######################################################################
+wan_get_peer_string()
+{
+    # Convert PEER number into string of carrier
+    case "$1" in
+        $WAN_PEER_QES)              echo "QES"; ;;
+        $WAN_PEER_WHISPERNET_TWO)   echo "Whispernet 2"; ;;
+        $WAN_PEER_ATT)              echo "ATT"; ;;
+        $WAN_PEER_VODAFONE)         echo "Vodafone"; ;;
+        *)                          echo "Unknown"; ;;
+    esac
+}
+
+
+######################################################################
+# Function:     wan_get_realm_from_peer
+# Purpose:      Given a peer, return the realm associated with it
+# Paramters:    peer - One of:
+#                   WAN_PEER_QES            - QES peer
+#                   WAN_PEER_WHISPERNET_TWO - Whispernet 2 peer
+#                   WAN_PEER_ATT            - AT&T peer
+# Returns:      none
+# Side Effect:  Echo's the realm for the given peer
+######################################################################
+wan_get_realm_from_peer()
+{
+    # Convert PEER number into string of carrier
+    case "$1" in
+        $WAN_PEER_QES)              echo "$WAN_PEER_QES_REALM"; ;;
+        $WAN_PEER_WHISPERNET_TWO)   echo "$WAN_PEER_WHISPERNET_TWO_REALM"; ;;
+        $WAN_PEER_ATT)              echo "$WAN_PEER_ATT_REALM"; ;;
+        *)                          echo "Unknown"; ;;
+    esac
+}
+
+
+######################################################################
+# Function:     wan_get_prl_version
+# Purpose:      Get the Prl Version from the WAN module
+# Paramters:    none
+# Returns:      0 - success getting Prl Version
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WAN module's Prl Version
+# Side Effects: Sets the WAN_PRL_VERSION global variable
+######################################################################
+wan_get_prl_version()
+{
+    WAN_PRL_VERSION=`lipc-get-prop $WAN_DBUS_ENTRYPOINT radioPrlVersion`
+    RETVAL=$?
+    if [ $RETVAL -eq 0 ]; then
+        vmsg "wan_get_prl_version() returning $WAN_PRL_VERSION"
+        do_local_echo "WAN Prl Version: $WAN_PRL_VERSION"
+    else
+        do_local_echo "Error $RETVAL getting Prl Version from WAN module"
+        WAN_PRL_VERSION="Not Available"
+    fi
+    return $RETVAL
+}
+
+
+
+######################################################################
+# Function:     wan_type_to_name
+# Purpose:      Given a WAN module type, returns the name of the module
+# Paramters:    type - one of:
+#                   WAN_TYPE_ANYDATA,
+#                   WAN_TYPE_NOVATEL_E72X,
+#                   WAN_TYPE_NOVATEL_E8X0,
+#                   WAN_TYPE_UNKNOWN
+# Returns:      echo's name of module
+######################################################################
+wan_type_to_name()
+{
+    case "$1" in
+        $WAN_TYPE_ANYDATA)
+            echo "AnyData"
+            ;;
+        $WAN_TYPE_NOVATEL_E72X)
+            echo "Novatel e725-e727"
+            ;;
+        $WAN_TYPE_NOVATEL_E8X0)
+            echo "Novatel e860-e870"
+            ;;
+        $WAN_TYPE_UNKNOWN | *)
+            echo "Unknown"
+            ;;
+    esac
+}
+
+######################################################################
+# Function:     wan_get_type
+# Purpose:      Get the WAN Module type
+# Paramters:    none
+# Returns:      echo's one of the following:
+#                   AnyData
+#                   Novatel e725-e727
+#                   Novatel e860-e870
+#                   Unknown
+# Side Effects: Sets the WAN_TYPE global variable to echo'd string
+######################################################################
+wan_get_type()
+{
+    if [ -f "/var/local/wan/info" ]; then
+        source "/var/local/wan/info"
+    else
+        do_local_echo "WAN info file not found in wan_get_type()"
+    fi
+    do_local_echo "WAN TYPE: $WAN_TYPE"
+}
+
+
+######################################################################
+# Function:     wan_display_modem_info_timeout
+# Purpose:      Display a message telling the user we timed out waiting
+#               for modem info to become available, waiting for user
+#               to respond before continuing.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wan_display_modem_info_timeout()
+{
+    # Display information to the user
+    clear_screen
+    print_center_text "WAN Module Info Timeout" "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 8 4
+    ${DOUT} -n 15 8 "FAILURE"
+    ${DOUT} -n 8 11 "Timed out waiting for WAN module"
+    ${DOUT} -n 8 13 "information to become available."
+    ${DOUT} 8 17 "Press $EXIT_KEY_LABEL to exit the WAN diagnostic."
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     init_wan_is_gsm
+# Purpose:      Initialize the WAN_IS_GSM global by determing modem
+#               type and then determining if it's gsm (type=3)
+# Paramters:    none
+# Returns:      none
+# Assumption:   WAN modem is powered on
+######################################################################
+init_wan_is_gsm()
+{
+    # Determine if we're using GSM WAN module
+    _WAN_TYPE=`cat /proc/wan/type`
+    if [ $_WAN_TYPE -eq $MODEM_TYPE_AD_DTP ]; then
+        echo "WAN Module is GSM-based"
+        export WAN_IS_GSM=1
+    else
+        echo "WAN Module is NOT GSM-based"
+        export WAN_IS_GSM=0
+    fi
+}
+
+
+######################################################################
+# Function:     wan_is_gsm
+# Purpose:      Determine if WAN module is gsm or not.
+# Paramters:    none
+# Returns:      0 - WAN is NOT GSM
+#               1 - WAN is GSM
+# Assumption:   WAN modem is powered on
+######################################################################
+wan_is_gsm()
+{
+    if [ $WAN_IS_GSM -eq $WAN_TYPE_UNINITIALIZED ]; then
+        init_wan_is_gsm
+    fi
+    return $WAN_IS_GSM
+}
+
+
+######################################################################
+# Function:     get_wan_module_information
+# Purpose:      Gather up WAN module information.
+# Paramters:    none
+# Returns:      0 - success
+#               1 - the wan info file was not found
+# Assumptions:  WAN is powered on
+# Side Effect:  Sets the following global variables:
+#                   WAN_ESN (if non-GSM)
+#                   WAN_ICCID (if GSM)
+#                   WAN_MSID
+#                   WAN_MDN
+#                   WAN_PRL_VERSION
+#                   WAN_TYPE
+#                   DEVICE_SERIAL_NUMBER
+#                   WAN_MODULE_INFORMATION_GATHERED
+######################################################################
+get_wan_module_information()
+{
+    # First, make sure that the WAN info file has been created,
+    # which it should since the modem is supposed to be powered on.
+    if ! [ -f "/var/local/wan/info" ]; then
+        return 1
+    fi
+
+    # Grab iccid if gsm, realm & esn otherwise
+    wan_is_gsm
+    if [ "$?" -eq 1 ]; then
+        # Set WAN_ICCID global
+        wan_get_iccid
+    else
+        # Set WAN_MDN global
+        wan_get_mdn
+
+        # Set WAN_REALM global
+        wan_get_realm
+    fi
+
+    # Set WAN_ESN global
+    wan_get_esn
+
+    # Set WAN_MSID global
+    wan_get_msid
+
+    # Set WAN_PEER global
+    wan_get_peer
+
+    # Set WAN_PRL_VERSION global
+    wan_get_prl_version
+
+    # Set WAN_TYPE global
+    wan_get_type
+
+    # Set DEVICE_SERIAL_NUMBER global
+    get_device_serial_number
+
+    # Set the WAN_MODULE_FIRMWARE_VERSION global
+    wan_get_module_version
+
+    # Set the global to indicate we've gathered this information
+    export WAN_MODULE_INFORMATION_GATHERED=1
+
+    # Return success
+    return 0
+}
+
+
+
+######################################################################
+# Function:     wan_display_power_failure
+# Purpose:      Display a test failure message to the user
+# Paramters:    mode - wan target power mode, one of:
+#                   WAN_POWER_ON, WAN_POWER_OFF, WAN_POWER_TPH
+#               verify - 0 to require operator to dismiss dialog
+#                        1 to auto-dismiss dialog
+# Returns:      none
+######################################################################
+wan_display_power_failure()
+{
+    MODE="$1"
+    NO_OPERATOR_VERIFY="$2"
+    case "$MODE" in
+        $WAN_POWER_ON)
+            MODE_TEXT="on"
+            ;;
+        $WAN_POWER_OFF)
+            MODE_TEXT="off"
+            ;;
+        $WAN_POWER_TPH | $WAN_POWER_ON_TO_TPH)
+            MODE_TEXT="into TPH mode"
+            ;;
+        *)
+            MODE_TEXT="Unknown"
+    esac
+
+    # Tell user about the failure
+    clear_screen
+    banner="WAN Module Failure"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    center_text "FAILURE" 8 "$base"
+    ${DOUT} -n $? 8 "FAILURE"
+
+    banner="Timed out waiting for WAN Module to power $MODE_TEXT."
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 11 "$banner"
+    
+    if [ $NO_OPERATOR_VERIFY -eq 1 ]; then
+        ${DOUT} 4 22 ""
+        sleep $WAN_DISPLAY_TIME_AUTO_MODE
+    else
+        banner="Press $EXIT_KEY_LABEL to exit WAN test."
+        center_text "$banner" 8 "$base"
+        ${DOUT} $? 16 "$banner"
+        wait_for_key $EXIT_KEY
+    fi
+}
+
+
+######################################################################
+# Function:     wan_get_modem_info_no_wait
+# Purpose:      Collect up modem information from WAN module and load
+#				up the globals.  To do this, we power on the WAN, wait
+#				for it to power up, request the information, then send
+#				command to power down the WAN, but don't wait for the
+#				power down to complete.
+# Parameters:	none
+# Returns:      0 - success
+#               1 - Failed to get WAN information
+#               2 - Failed to power WAN off
+# Side Effect:  sets WAN information globals
+######################################################################
+wan_get_modem_info_no_wait()
+{
+    # Turn the WAN on, showing status...
+    wan_info_power $WAN_POWER_ON 1
+    RETVAL=$?
+    if [ $RETVAL -eq 1 ]; then
+        wan_display_power_failure $WAN_POWER_ON $NO_OPERATOR_VERIFY
+		export RUN_IN_FAILURE_REASON="WAN Power On Timeout"
+        failure "$RUN_IN_FAILURE_REASON"
+        return 1
+    fi
+
+
+    # Wait for the module information to become available,
+    # timing out if it takes too long....
+    WAIT_COUNT=0
+    while [ 1 -ne `lipc-get-prop $WAN_DBUS_ENTRYPOINT radioInfoIsAvailable` ]; do
+        WAIT_COUNT=$(($WAIT_COUNT+1));
+        if [ $WAIT_COUNT -ge $WAN_INFO_READY_TIMEOUT ]; then
+            wan_info_power $WAN_POWER_OFF 1
+            return 1
+        fi
+        sleep 1
+    done
+
+    # Get information from the module...
+    get_wan_module_information
+    RETVAL=$?
+    if [ $RETVAL -eq 1 ]; then
+        failure "WAN info file not created properly"
+        return 1
+    fi
+
+    # Turn the WAN back off, showing status...
+	wan_power_background $WAN_POWER_OFF 1
+    RETVAL=$?
+    if [ $RETVAL -eq 1 ]; then
+        return 2
+    fi
+
+	return 0
+}
+
+
+######################################################################
+# Function:     wan_modem_info_test
+# Purpose:      Collect up modem information from WAN module and display
+#               the results on the screen for the user.  Ask user to
+#               verify results are correct and wait for a success/failure
+#               response.  Set the subtest result based on user's response.
+# Paramters:    1 - diag running in auto mode, suppress asking for operator input
+#               0 - diag running with operator, ask for test verification
+# Returns:      0 - Test passed
+#               1 - Test failed
+# Side Effect:  1) Displays a dialog on the screen with modem information,
+#               waiting for user to respond.
+#               2) Sets subtest result
+#               3) Powers on WAN to get information from it, turns it
+#                   off when it's done...
+######################################################################
+wan_modem_info_test()
+{
+    # Running in auto mode or not?
+    NO_OPERATOR_VERIFY=$1
+
+    # Turn the WAN on, showing status...
+    wan_info_power $WAN_POWER_ON 1
+    RETVAL=$?
+    if [ $RETVAL -eq 1 ]; then
+        wan_display_power_failure $WAN_POWER_ON $NO_OPERATOR_VERIFY
+		export RUN_IN_FAILURE_REASON="WAN Power On Timeout"
+        failure "$RUN_IN_FAILURE_REASON"
+        return 1
+    fi
+
+    #
+    # IF on GSM-based modem, while waiting for module information, 
+    # make sure to watch for fatalFailure,
+    # and if seen, check to see if we have a SIM error or not
+    #
+    wan_is_gsm
+    if [ "$?" -eq 1 ]; then
+        # lipc-wait-event com.lab126.wan fatalFailure > file &
+        #
+        # file will contain the failure code. -13 means that the signal 
+        # thread failed to start, which is likely the SIM on GSM devices.
+        # TODO - implement this as background checker... njv
+        #
+        echo "GSM modem, would dispatch SIM watcher here...."
+    fi
+
+    # Wait for the module information to become available,
+    # timing out if it takes too long....
+    WAIT_COUNT=0
+    while [ 1 -ne `lipc-get-prop $WAN_DBUS_ENTRYPOINT radioInfoIsAvailable` ]; do
+        WAIT_COUNT=$(($WAIT_COUNT+1));
+        if [ $WAIT_COUNT -ge $WAN_INFO_READY_TIMEOUT ]; then
+            wan_display_modem_info_timeout
+			export RUN_IN_FAILURE_REASON="WAN Module Info Timeout"
+        	failure "$RUN_IN_FAILURE_REASON"
+
+            # Turn the WAN back off, showing status...
+            wan_info_power $WAN_POWER_OFF 1
+            RETVAL=$?
+            if [ $RETVAL -eq 1 ]; then
+                wan_display_power_failure $WAN_POWER_OFF $NO_OPERATOR_VERIFY
+				export RUN_IN_FAILURE_REASON="WAN Power Off Timeout"
+        		failure "$RUN_IN_FAILURE_REASON"
+            fi
+            return 1
+        fi
+        sleep 1
+    done
+
+    # Get information from the module...
+    get_wan_module_information
+    _result=$?
+    if [ $_result -eq 1 ]; then
+        failure "WAN info file not created properly"
+        return 1
+    fi
+
+
+	# Write out some WAN info to a file for the diag disable operation to use
+    wan_is_gsm
+    if [ "$?" -eq 1 ]; then
+        echo "IMEI:              $WAN_ESN" > "$WAN_INFORMATION_LOGFILE"
+        echo "ICCID:             $WAN_ICCID" >> "$WAN_INFORMATION_LOGFILE"
+    else
+        echo "ESN:               $WAN_ESN" > "$WAN_INFORMATION_LOGFILE"
+        echo "MDN:               $WAN_MDN" >> "$WAN_INFORMATION_LOGFILE"
+        #echo "Realm:             $WAN_REALM" >> "$WAN_INFORMATION_LOGFILE"
+    fi
+    echo "MSID:              $WAN_MSID" >> "$WAN_INFORMATION_LOGFILE"
+
+    # Turn the WAN back off, showing status...
+    wan_info_power $WAN_POWER_OFF 1
+    RETVAL=$?
+    if [ $RETVAL -eq 1 ]; then
+        wan_display_power_failure $WAN_POWER_OFF $NO_OPERATOR_VERIFY
+		export RUN_IN_FAILURE_REASON="WAN Power Off Timeout"
+        failure "$RUN_IN_FAILURE_REASON"
+        return 1
+    fi
+
+    # Get string of carrier
+    WAN_PEER_STRING=`wan_get_peer_string $WAN_PEER`
+
+    # Verify the realm if the WAN is NOT GSM (won't work on GSM)
+    wan_is_gsm
+    if [ "$?" -eq 0 ]; then
+        # Verify that the Peer matches the REALM...
+        wan_verify_peer $WAN_PEER $WAN_REALM
+        if [ "$?" -eq 1 ]; then
+            display_wan_peer_realm_failure
+            failure "WAN Peer Realm Verification"
+        elif ! [ $NO_OPERATOR_VERIFY -eq 1 ]; then
+            success "WAN Peer Realm Verification"
+        fi
+    fi
+
+    # Display information to the user
+    clear_screen
+    ${DOUT} -n 12 4 "WAN Module Information"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 4 7 "Type          : $WAN_TYPE"
+
+    wan_is_gsm
+    if [ "$?" -eq 1 ]; then
+        ${DOUT} -n 4 9 "ICCID         : $WAN_ICCID"
+    	${DOUT} -n 4 11 "IMEI          : $WAN_ESN"
+        let _next_line=13
+    else
+        ${DOUT} -n 4 9 "MDN           : $WAN_MDN"
+        ${DOUT} -n 4 11 "Realm         : $WAN_REALM"
+    	${DOUT} -n 4 13 "ESN           : $WAN_ESN"
+        let _next_line=15
+    fi
+    ${DOUT} -n 4 $_next_line "MSID          : $WAN_MSID"
+    let _next_line+=2
+    ${DOUT} -n 4 $_next_line "PEER          : $WAN_PEER_STRING"
+    let _next_line+=2
+    ${DOUT} -n 4 $_next_line "Prl Version   : $WAN_PRL_VERSION"
+    let _next_line+=2
+    ${DOUT} -n 4 $_next_line "FW Version    : $WAN_MODULE_FIRMWARE_VERSION"
+    let _next_line+=2
+    ${DOUT} -n 4 $_next_line "Serial Number : $DEVICE_SERIAL_NUMBER"
+    let _next_line+=4
+    
+    if [ $NO_OPERATOR_VERIFY -eq 1 ]; then
+        ${DOUT} 4 $_next_line ""
+        sleep $WAN_DISPLAY_TIME_AUTO_MODE
+    else
+        ${DOUT} -n 4 $_next_line "Press $SUCCESS_KEY_LABEL if the WAN information is correct."
+        let _next_line+=2
+        ${DOUT} 4 $_next_line "Press $FAILURE_KEY_LABEL if WAN information is NOT correct."
+        while [ 1 -eq 1 ]; do
+            KEY=`$GET_KEYBOARD_INPUT`
+            RETVAL=$?
+            if [ $RETVAL -eq 0 ]; then
+                case "$KEY" in
+                    $SUCCESS_KEY)
+                        success "WAN Module Info Test"
+                        return 0
+                        ;;
+
+                    $FAILURE_KEY)
+                        failure "WAN Module Info Test"
+                        return 1
+                        ;;
+
+                    *)
+                        ;;
+                esac
+            fi
+        done
+    fi
+
+    return 0
+}
+
+
+#___________________________________________________________________
+#
+#   WAN HAL Initialization and Teardown Routines Start Here...
+#
+#___________________________________________________________________
+#
+
+######################################################################
+# Function:     wan_hal_init
+# Purpose:      Hal initialization routine for WAN.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      0 - All support verified present
+#				1 - Missing RF Disable proc entry
+######################################################################
+wan_hal_init()
+{
+    vmsg "wan_hal_init()"
+	if ! [ -f $WAN_RF_DISABLE_PROC_ENTRY ]; then
+		failure "WAN RF Disable Entry $WAN_RF_DISABLE_PROC_ENTRY Missing"
+		return 1
+	fi
+	return 0
+}
+
+
+######################################################################
+# Function:     wan_hal_exit
+# Purpose:      Hal initialization routine for WAN.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wan_hal_exit()
+{
+    vmsg "wan_hal_exit()"
+}
+
+
+# Don't include HAL more than once
+if [ "x$_WAN_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+# Time to wait before starting 511 test
+export WAN_511_PREWAIT_SECONDS=15
+
+export WAN_POWER_OFF=0
+export WAN_POWER_ON=1
+export WAN_POWER_TPH=2
+export WAN_POWER_ON_TO_TPH=3
+
+
+# WAN Type
+export WAN_TYPE_UNINITIALIZED=255 
+export WAN_IS_GSM=$WAN_TYPE_UNINITIALIZED
+export MODEM_TYPE_AD_DTP=3 
+
+# WAN Peer Constants
+export WAN_PEER_QES=1
+export WAN_PEER_WHISPERNET_TWO=2
+export WAN_PEER_ATT=3
+export WAN_PEER_VODAFONE=4
+export WAN_PEER_QES_REALM="QDC3"
+export WAN_PEER_QES_ROAM_REALM="QDC3_ROAM"
+export WAN_PEER_WHISPERNET_TWO_REALM="@spp307.dl.sprintpcs.com"
+export WAN_PEER_ATT_REALM="??"
+
+
+#
+# WAN power macros
+#
+export RUN_WAN_POWER_OFF="/usr/sbin/wancontrol wanoff"
+export RUN_WAN_POWER_ON="/usr/sbin/wancontrol wanon"
+export RUN_WAN_POWER_TPH="/usr/sbin/wancontrol wanontph"
+export RUN_WAN_POWER_ON_TO_TPH="/usr/sbin/wancontrol devicesleep"
+
+
+#
+# Power state property values as reported by wand
+#
+export WAN_POWER_STATE_OFF=0
+export WAN_POWER_STATE_ON=1
+export WAN_POWER_STATE_ASLEEP=2
+
+
+#
+# WAN Types
+#
+export WAN_TYPE_ANYDATA=0
+export WAN_TYPE_NOVATEL_E72X=1
+export WAN_TYPE_NOVATEL_E8X0=2
+export WAN_TYPE_UNKNOWN=99
+
+
+#
+# WAN information globals
+#
+export WAN_PRL_VERSION="Not Available"
+export WAN_MDN="Not Available"
+export WAN_PEER="Not Available"
+export WAN_REALM="Not Available"
+export WAN_MSID="Not Available"
+export WAN_ESN="Not Available"
+export WAN_ICCID="Not Available"
+export WAN_TYPE="$WAN_TYPE_UNKNOWN"
+
+
+#
+# lipc information
+#
+export WAN_DBUS_ENTRYPOINT=com.lab126.wan
+export POWERD_DBUS_ENTRYPOINT=com.lab126.powerd
+
+
+#
+# Timeouts to wait for success before failing a wan power operation
+#
+export WAN_POWER_OFF_TIMEOUT=180
+export WAN_POWER_ON_TIMEOUT=120
+export WAN_POWER_TPH_TIMEOUT=60
+
+#
+# If seeing an AT&T simm for first time, modem will reboot
+# and extra time would cause timeout failure when set to
+# 20 seconds.  We boost this timeout to 60 seconds to account
+# for the AT&T SIMM case
+#
+export WAN_INFO_READY_TIMEOUT=60 
+ 
+#
+# Proc entry to disable RF mode
+#
+export WAN_RF_DISABLE_PROC_ENTRY="/proc/wan/enable"
+
+
+#
+# Constants for WAN 511 test
+#
+export WAN_511_RESULTS_TMP_FILE="/tmp/511.log"
+export WAN_511_RESULTS_FILENAME="${PRODUCT_NAME}-511.log"
+export WAN_511_RESULTS_OUTPUT_FILE="/tmp/${WAN_511_RESULTS_FILENAME}"
+
+# Minimum power level for RF test - warning if under 60%
+export WAN_511_BATTERY_LEVEL=60
+
+export _WAN_HAL_INCLUDED=1
+
+# Timeout waiting for startWan to return success status
+export WAN_STARTWAN_POWERON_TIMEOUT=34 

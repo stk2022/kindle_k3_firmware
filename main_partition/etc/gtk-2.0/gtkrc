@@ -1,0 +1,128 @@
+# Global color definitions for use inside style elements
+gtk_color_scheme = "fg_color: #000000\nbg_color: #ffffff"
+
+# Style for scrollbars
+style "kindle-scrollbar"
+{
+    GtkScrollbar::has-backward-stepper  = 0
+    GtkScrollbar::has-forward-stepper   = 0
+    GtkScrollbar::slider-width          = 16
+    GtkScrollbar::trough-border         = 0
+
+    engine "pixmap"
+    {
+        
+        # Sliders background (trough)
+        #=============================
+        image 
+        {
+                function                = BOX
+                detail                  = "trough"
+                file                    = "Images/Scrollbars/trough-scrollbar-horiz.png"
+         # The border is used to define the area that should not be stretched.
+                border                  = { 6, 6, 2, 7 }
+                stretch                 = TRUE
+                orientation             = HORIZONTAL
+        }
+        image 
+        {
+                function                = BOX
+                detail                  = "trough"
+                file                    = "Images/Scrollbars/trough-scrollbar-vert.png"
+         # The border is used to define the area that should not be stretched.
+                border                  = { 2, 7, 6, 6 }
+
+                stretch                 = TRUE
+                orientation             = VERTICAL
+        }
+
+        # Sliders - horizontal
+        #=============================
+        image 
+        {
+                function                = SLIDER
+                detail                  = "slider"
+                file                    = "Images/Scrollbars/slider-horiz.png"
+         # The border is used to define the area that should not be stretched.
+                border                  = { 6, 6, 3, 8 }
+                stretch                 = TRUE
+                orientation             = HORIZONTAL
+        }
+
+        # Sliders - vertical
+        #=============================
+        image 
+        {
+                function                = SLIDER
+                detail                  = "slider"
+                file                    = "Images/Scrollbars/slider-vert.png"
+         # The border is used to define the area that should not be stretched. 
+                border                  = { 3, 8, 6, 6 }
+                stretch                 = TRUE
+                orientation             = VERTICAL
+        }
+        
+    }
+
+}
+
+
+# Style for scrolled windows
+style "kindle-scrolled-window"
+{
+    GtkScrolledWindow::scrollbar-spacing = 2
+}
+
+
+# Style for windows
+style "kindle-window"
+{
+    # Make the background white
+    bg[NORMAL] = @bg_color
+    bg[ACTIVE] = @bg_color
+    bg[PRELIGHT] = @bg_color
+    bg[INSENSITIVE] = @bg_color
+    bg[SELECTED] = @bg_color
+}
+
+# Style for menus
+style "kindle-menu"
+{
+    # Make the background white
+    bg[NORMAL] = @bg_color
+    bg[ACTIVE] = @bg_color
+    bg[PRELIGHT] = @bg_color
+    bg[INSENSITIVE] = @bg_color
+    bg[SELECTED] = @bg_color
+}
+
+# Style for menu-items
+style "kindle-menu-item"
+{
+    # Make the highlight black
+    bg[NORMAL] = @fg_color
+    bg[ACTIVE] = @fg_color
+    bg[PRELIGHT] = @fg_color
+    bg[INSENSITIVE] = @fg_color
+    bg[SELECTED] = @fg_color
+}
+
+# Style for buttons
+style "kindle-button"
+{
+    # Make the background white
+    bg[NORMAL] = @bg_color
+    bg[ACTIVE] = @bg_color
+    bg[PRELIGHT] = @bg_color
+    bg[INSENSITIVE] = @bg_color
+    bg[SELECTED] = @bg_color
+}
+
+# Matches
+class "GtkScrollbar" style "kindle-scrollbar"
+class "GtkScrolledWindow" style "kindle-scrolled-window"
+class "GtkWindow" style "kindle-window"
+class "GtkMenu" style "kindle-menu"
+class "GtkMenuItem" style "kindle-menu-item"
+# Enable the following line if white buttons are desired.
+#class "GtkButton" style "kindle-button"

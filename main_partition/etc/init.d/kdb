@@ -1,0 +1,67 @@
+#!/bin/sh
+
+# Normally, we'd call the mntroot_rw function from functions here.  
+# But the mntroot_rw from functions uses kdb.  So, we leave it raw here.
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_BLKROOT_DEV=`cat /proc/cmdline | sed 's/.*\/dev\/\(.*\)p1.*/\1/'`
+_ROOTFS_DEV=/dev/${_BLKROOT_DEV}p1
+
+_SYSCON_ROOT=/etc/sysconfig/root
+
+create_root_dev() {
+    # updating the KindleRegistry key DEV_ROOT to whatever it needs to be 
+    # (for other scripts to move to using this ! )
+    msg "Setting boot device to ${_BLKROOT_DEV}" I
+    kdb set system/driver/filesystem/DEV_ROOT /dev/${_BLKROOT_DEV}    
+
+    if [ ! -f ${_SYSCON_ROOT} ] ; then
+        mntroot rw
+        echo "BLKROOT_DEV=$_BLKROOT_DEV" > ${_SYSCON_ROOT}
+        echo "" >> ${_SYSCON_ROOT}
+        echo "MNTROOT_DEV=$_ROOTFS_DEV" >> ${_SYSCON_ROOT}
+        mntroot ro
+    fi
+}
+
+UDEV_DIR=/etc/udev/rules.d
+UDEV_HW=${UDEV_DIR}/10-hw.rules
+
+case "$1" in
+    start|restart)
+
+        _DEVICE=`productid`        
+
+        if ( is_Luigi_Platform ) ; then
+            _PLATFORM=luigi
+        else
+            _PLATFORM=mario
+        fi
+
+        if [ ! -L /etc/kdb ] ; then
+            msg "Init-ing default features for current platform" I       
+            mntroot rw
+            ln -sf /etc/kdb.src/${_PLATFORM} /etc/kdb
+            mntroot ro
+        fi
+
+        if [ ! -L ${UDEV_HW} ] ; then
+            msg "Init-ing default udev rules for current platform" I
+            mntroot rw
+            ln -sf ${UDEV_DIR}/XX-${_PLATFORM}.rules ${UDEV_HW}
+            mntroot ro
+        fi            	
+        
+        create_root_dev
+        ;;
+    *)
+        msg "Usage: $0 start" W
+        exit 1 
+        ;;
+
+esac
+
+exit 0
+

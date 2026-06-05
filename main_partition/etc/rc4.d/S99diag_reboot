@@ -1,0 +1,30 @@
+#! /bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# For DIAGNOSTIC_PROC_ABORTED_FILE definition
+export DIAGNOSTIC_ROOT="/test/diags/factory"
+_DIAG_SETTINGS="${DIAGNOSTIC_ROOT}/environment.vars"
+[ -f ${_DIAG_SETTINGS} ] && . ${_DIAG_SETTINGS}
+
+do_reboot () {
+    # Save off log information....
+    mntroot_rw
+    ${TINYROT} --force
+    mntroot_ro
+
+    # Tell diags that we saw this failure...
+    echo "process_aborted" >> "${DIAGNOSTIC_PROC_ABORTED_FILE}"
+    echo
+    echo "Rebooting due to unexpected diagnostic abort..."
+    echo
+    reboot -d -f
+}
+
+case "$1" in
+  *)
+        do_reboot
+        ;;
+esac
+

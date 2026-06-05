@@ -1,0 +1,95 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_FB_ARBITRATE=/opt/eink/scripts/fb_arbitrate
+_FB_ARBITRATE_TOP_PIDFILE=/var/run/`basename ${_FB_ARBITRATE}_top`.pid
+_FB_ARBITRATE_BOT_PIDFILE=/var/run/`basename ${_FB_ARBITRATE}_bot`.pid
+
+_KEEP_AWAKE=/etc/rc.d/keep_awake
+_KEEP_AWAKE_PIDFILE=/var/run/`basename ${_KEEP_AWAKE}`.pid
+
+start_fb_arbitrate_top()
+{
+    if [ -x "${_FB_ARBITRATE}" ]; then
+        ${_FB_ARBITRATE} &
+        if [ $? ]; then
+            echo $! >${_FB_ARBITRATE_TOP_PIDFILE}
+        fi
+    fi
+}
+
+stop_fb_arbitrate_top()
+{
+    if [ -r "${_FB_ARBITRATE_TOP_PIDFILE}" ]; then
+        kill `cat ${_FB_ARBITRATE_TOP_PIDFILE}`
+    fi
+}
+
+start_fb_arbitrate_bot()
+{
+    if [ -x "${_FB_ARBITRATE}" ]; then
+        ${_FB_ARBITRATE} bot &
+        if [ $? ]; then
+            echo $! >${_FB_ARBITRATE_BOT_PIDFILE}
+        fi
+    fi
+}
+
+stop_fb_arbitrate_bot()
+{
+    if [ -r "${_FB_ARBITRATE_BOT_PIDFILE}" ]; then
+        kill `cat ${_FB_ARBITRATE_BOT_PIDFILE}`
+    fi
+}
+
+start_keep_awake()
+{
+    if [ -x "${_KEEP_AWAKE}" ]; then
+        ${_KEEP_AWAKE} &
+        if [ $? ] ; then
+            echo $! >${_KEEP_AWAKE_PIDFILE}
+        fi
+    fi
+}
+
+stop_keep_awake()
+{
+    if [ -r "${_KEEP_AWAKE_PIDFILE}" ]; then
+        kill `cat ${_KEEP_AWAKE_PIDFILE}`
+    fi
+}
+
+clear_screen()
+{
+    ${EIPS} -c
+}
+
+# Start/stop fb arbitration test.
+#
+_ACTION=${1:-stop}
+
+if ( is_Framework_Running ); then
+    ${FRAMEWORK} stop
+else
+    clear_screen
+fi
+
+case ${_ACTION} in
+
+    start)
+        start_keep_awake
+        start_fb_arbitrate_top
+        start_fb_arbitrate_bot
+    ;;
+    
+    stop)
+        stop_keep_awake
+        stop_fb_arbitrate_top
+        stop_fb_arbitrate_bot
+        wake_screen
+        clear_screen
+    ;;
+
+esac

@@ -1,0 +1,1627 @@
+######################################################################
+#
+#  File:   audio.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   02/19/08
+#
+#  Copyright (C) 2005-2010 Amazon Technologies
+#
+#  Description:
+#      Mario Architecture Sound HAL layer for diagnostic audio scripts.  
+#   This file will define various HAL routines based on the utility used
+#   for testing the audio system.
+#
+#   Balance and Volume Constants
+#       FULL_LEFT                       - Left audio channel
+#       FULL_RIGHT                      - Right audio channel
+#       EVEN_BALANCE                    - Balance even on both right and left
+#       MAX_VOLUME                      - Maximum volume supported on device
+#       MIN_VOLUME                      - Minimum volume supported on device
+#       DEFAULT_VOLUME                  - Default volume to use on device
+#       MUTE_AUDIO                      - Mute the audio
+#
+#   Channel Constants
+#       CHANNEL_NONE                    - No channels
+#       CHANNEL_ALL                     - All channels (hp left/right, speakers left/right)
+#       CHANNEL_HP_LEFT                 - Headphones Left Channel
+#       CHANNEL_HP_RIGHT                - Headphones Right Channel
+#       CHANNEL_HP_STEREO               - Both Headphone Channels
+#       CHANNEL_SPEAKER_LEFT            - Left Speaker Channel
+#       CHANNEL_SPEAKER_RIGHT           - Right Speaker Channel
+#       CHANNEL_SPEAKER_STEREO          - Both Speaker Channels
+#       CHANNEL_ALL_SPEAKER             - Both Speaker Channels (for automation)
+#
+#   Return Values from Headphone Detection Routines
+#       HEADPHONES_DETECTED             - Headphones were detected (in)
+#       HEADPHONES_NOT_DETECTED         - Headphones were not detected (out)
+#
+#   Error Codes from audio_hal_init()
+#       AUDIO_PLAY_TOOL_BROKEN          - Audio play tool is missing or broken
+#       AUDIO_MIX_TOOL_BROKEN           - Mixer tool is missing or broken
+#       AUDIO_BALANCE_TOOL_BROKEN       - Audio balance mechanism is missing or broken
+#       AUDIO_VOLUME_TOOL_BROKEN        - Audio volume mechanism is missing or broken
+#       AUDIO_SPEAKER_ENABLE_BROKEN     - Speaker enable mechanism is missing or broken
+#
+#   Global Variables
+#       AUDIO_CHANNELS_INITED           - 1 if channels have been initialized, 0 if not
+#       AUDIO_CHANNELS_ENABLED          - 1 if channels enabled, 0 if not
+#       
+#   This file contains the following hal routines:
+#       audio_set_channel_enable()      - Remember channel enable status
+#       audio_get_channel_enabled()     - Return remembered channel enable status
+#       audio_restore_channel_state()   - Restore channel status to last remembered
+#       audio_set_parms()               - Set channel balance and volume
+#       set_balance()                   - Set channel balance
+#       set_speaker_balance()           - Set speaker channel balance
+#       set_hp_balance()                - Set headphone channel balance
+#       disable_speakers()              - Disable speakers
+#       enable_speakers()               - Enable speakers
+#       enable_headphones()             - Enable headphones
+#       disable_headphones()            - Disable headphones
+#       enable_channel()                - Enable a given channel
+#       disable_channel()               - Disable a given channel
+#       set_volume_in()                 - Set input volume (does nothing)
+#       audio_set_volume_out()          - Sets the audio out volume variable
+#       audio_get_volume_out()          - Returns the audio out volume variable
+#       audio_restore_volume_out()      - Restores device volume to last remembered volume
+#       set_volume_out()                - Sets device output volume
+#       set_speaker_volume()            - Sets speaker volume to specified volume
+#       set_hp_volume()                 - Sets headphone volume
+#       verify_audio_system_support()   - Verifies all required audio features present
+#       get_speaker_volume()            - Returns speaker volume from system
+#       get_hp_volume()                 - Returns headphone volume from system
+#       get_speaker_balance()           - Returns speaker balance from system
+#       get_hp_balance()                - Returns headphone balance from system
+#       mute()                          - Mute the system if not already muted
+#       unmute()                        - Unmute the system if muted.
+#       audio_start_sound()             - Start a sound playing
+#       audio_stop_sound()              - Stop the sound from playing
+#       audio_hp_detect()               - Determine if headphones are inserted or not
+#       audio_wait_hp_detect()          - Wait for headphones to be inserted
+#       audio_fct_wait_hp_detect()      - FCT routine to wait for headphone event or timeout
+#       do_run_mode_audio()             - Sound run mode - Enables speakers & hp, starts a sound
+#       audio_hal_init()                - Audio hal initialization routine
+#       audio_hal_exit()                - Audio hal cleanup exit routine
+#
+######################################################################
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+# Key Map Definition
+[ -f ${_KEYBOARD_HAL_FUNCTIONS} ] && . ${_KEYBOARD_HAL_FUNCTIONS}
+
+# Button Map Definition
+[ -f ${_BUTTON_HAL_FUNCTIONS} ] && . ${_BUTTON_HAL_FUNCTIONS}
+
+# Player and Mixer execution macros
+RUN_PLAY_TOOL="$DIAG_TOOL_ROOT/playsound"
+RUN_KILL_PLAY_TOOL="killall -9 playsound"
+
+
+export PCM_TOOL_NAME="pcm"
+export PCM_TOOL="/test/diags/factory/tools/$PCM_TOOL_NAME"
+
+# Current tool being used for audio
+export _AUDIO_TOOL_USED="$PCM_TOOL_NAME"
+
+
+export APLAY_TOOL_NAME="aplay"
+export APLAY_TOOL="/usr/bin/$APLAY_TOOL_NAME"
+
+export GST_LAUNCH_TOOL_NAME="gst-launch"
+export GST_LAUNCH_TOOL="/usr/bin/$GST_LAUNCH_TOOL_NAME"
+       
+# Current player being used to play sound
+export AUDIO_TOOL_NAME=$APLAY_TOOL_NAME
+
+# TTS Support
+export TTS_TEST_FILE="$AUDIO_SND_FILES_ROOT/tts.txt"
+export TTS_DAEMON_NAME="ttsd"
+export FEED_TTS_TOOL_NAME="feed_tts.sh"
+export FEED_TTS_TOOL="$DIAG_TOOL_ROOT/$FEED_TTS_TOOL_NAME"
+export KILL_FEED_TTS_TOOL="killall -9 $FEED_TTS_TOOL_NAME"
+export TTS_FIFO="/var/tmp/ttsUSFifo"
+
+# Atlas Overclock Macro
+export ORIG_ATLAS_CLOCK=0
+READ_ATLAS_CLOCK="$DIAG_TOOL_ROOT/pmic read 41"
+OVER_CLOCK_ATLAS="$DIAG_TOOL_ROOT/pmic wor 41 9 7 3"
+RESTORE_ATLAS_CLOCK="$DIAG_TOOL_ROOT/pmic write 41 $ORIG_ATLAS_CLOCK"
+
+# Message to sync external audio test tool
+export AUTOMATED_AUDIO_SYNC_MESSAGE="Starting audio sample for automated tester..."
+
+
+# For storing PID of playAtlasSoundTool
+export ATLAS_SOUND_PID=0
+
+#
+# Proc entry for enabling/disabling the speaker
+#
+SPEAKER_ENABLE_PROC_ENTRY="/proc/asound/PMICaudio/pcm0p/sub0/speaker"
+
+
+#
+# Constants for volume and balance setting
+#
+export  FULL_LEFT=100
+export  FULL_RIGHT=0
+export  EVEN_BALANCE=50
+export  MAX_VOLUME=100
+export  MIN_VOLUME=0
+export  DEFAULT_VOLUME=50
+export  MUTE_AUDIO=$MIN_VOLUME
+
+#
+# Sound channel constants for use as parameter when calling
+#    enable_channel() and disable_channel()
+#
+export  CHANNEL_NONE=0
+export  CHANNEL_ALL=1
+export  CHANNEL_HP_LEFT=2
+export  CHANNEL_HP_RIGHT=3
+export  CHANNEL_HP_STEREO=4
+export  CHANNEL_SPEAKER_LEFT=5
+export  CHANNEL_SPEAKER_RIGHT=6
+export  CHANNEL_SPEAKER_STEREO=7
+export  CHANNEL_ALL_SPEAKER=8
+
+
+#
+# Return values from headphone detection routines
+#
+export HEADPHONES_DETECTED=1
+export HEADPHONES_NOT_DETECTED=0
+
+#
+# Storage for pre-mute volume settings
+#
+export PRE_MUTE_HP_VOLUME=$DEFAULT_VOLUME
+export PRE_MUTE_SPEAKER_VOLUME=$DEFAULT_VOLUME
+export AUDIO_VOLUME=$DEFAULT_VOLUME
+export DEFAULT_AUTOMATED_VOLUME_OUT="50"
+
+
+#
+# possible error codes returned from audio_hal_init
+#
+AUDIO_PLAY_TOOL_BROKEN=1
+AUDIO_MIX_TOOL_BROKEN=2
+AUDIO_BALANCE_TOOL_BROKEN=3
+AUDIO_VOLUME_TOOL_BROKEN=4
+AUDIO_SPEAKER_ENABLE_BROKEN=5
+
+
+#
+#
+#
+export AUDIO_DBUS_ENTRYPOINT="com.lab126.audio"
+TTS_DBUS_ENTRYPOINT="com.lab126.tts"
+ 
+#
+# Indicates whether hal_init intialized the channels or not
+#
+export AUDIO_CHANNELS_INITED=0
+export AUDIO_CHANNELS_ENABLED=$CHANNEL_NONE
+
+
+#
+# Maximum seconds to wait while looking for headphone insertion event
+#
+export HP_DETECT_TIMEOUT=15
+
+
+#
+# Wait up to 5 seconds for a headphone insert/remove event during FCT test
+#   Time is in 1/10 of a second....
+#
+export FCT_HP_WAIT_TIMEOUT=50 
+
+######################################################################
+# Function:     audio_set_channel_enable
+# Purpose:      Set a flag to indicate audio channel enable status
+# Paramters:    enable status 
+# Returns:      none
+######################################################################
+audio_set_channel_enable()
+{
+    export AUDIO_CHANNELS_ENABLED=$1
+}
+
+######################################################################
+# Function:     audio_get_channel_enable
+# Purpose:      Return the audio channel enable status
+# Paramters:    none
+# Returns:      audio channel enable status
+######################################################################
+audio_get_channel_enabled()
+{
+    return $AUDIO_CHANNELS_ENABLED
+}
+
+######################################################################
+# Function:     audio_restore_channel_state
+# Purpose:      Return the audio channel status to the last remembered
+#               state.
+# Paramters:    none
+# Returns:      none
+# Side Effects: Possibly enables or disables channels
+######################################################################
+audio_restore_channel_state()
+{
+    enable_channel $AUDIO_CHANNELS_ENABLED
+}
+
+
+######################################################################
+# Function:    set_balance
+# Purpose:     Set the Left/Right Speaker and HP Channel Balance
+# Paramters:   leftValue - Value in percentage of balance for left channel
+#                   (remainder from 100% is right channel balance value)
+# Returns:     none
+# Assumptions: Audio driver supports the Lipc Balance property
+# Side Effect: Sets balance of both HP and Speakers on Mario
+######################################################################
+set_balance()
+{
+    vmsg "set_balance"
+
+    # Verify parameter is integer between 0 and 100
+    balance=$1
+    nonums="$(echo $balance |  sed 's/[0-9]//g')"
+    if [ ! -z "$nonums" ] ; then
+        echo "Balance percentage '$balance' must be an integer value."
+        exit 0
+    elif [ $balance -gt 100 ]; then
+        echo "Balance percentage '$balance' must be integer between 0 and 100."
+        exit 0
+    fi
+
+    # Set balance
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        lipc-set-prop "$AUDIO_DBUS_ENTRYPOINT" "Balance" "$balance" > /dev/null 2>&1
+    else
+        echo "set_balance not supported yet"
+    fi
+}
+
+
+
+######################################################################
+# Function:    set_speaker_balance
+# Purpose:     Set the Left/Right Speaker Channel Balance
+# Paramters:   leftValue - Value in percentage of balance for left channel
+#                   (remainder from 100% is right channel balance value)
+# Returns:     none
+# Assumptions: Audio driver supports the Lipc Balance property
+# Side Effect: Sets balance of both HP and Speakers on Mario
+######################################################################
+set_speaker_balance()
+{
+    vmsg "set_speaker_balance"
+    set_balance "$@"
+}
+
+######################################################################
+# Function:    set_hp_balance
+# Purpose:     Set the Left/Right Headphone Jack Channel Balance
+# Paramters:   leftValue - Value in percentage of balance for left channel
+#                   (remainder from 100% is right channel balance value)
+# Returns:     none
+# Assumptions: Audio driver supports the Lipc Balance property
+# Side Effect: Sets balance of both HP and Speakers on Mario
+######################################################################
+set_hp_balance()
+{
+    vmsg "set_hp_balance"
+    set_balance "$@"
+}
+
+
+######################################################################
+# Function:    disable_speakers
+# Purpose:     Disable the speaker channels
+# Paramters:   none
+# Returns:     none
+# Assumptions: Enabling/Disabling speakers is controlled by GPIO FIXME
+######################################################################
+disable_speakers()
+{
+    vmsg "disable_speakers"
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        echo 0 > "$SPEAKER_ENABLE_PROC_ENTRY"
+    else
+        echo "Disable speaker not supported yet"
+    fi
+}
+
+
+######################################################################
+# Function:    enable_speakers
+# Purpose:     Enable the speaker channels
+# Paramters:   none
+# Returns:     none
+######################################################################
+enable_speakers()
+{
+    vmsg "enable_speakers"
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        echo 1 > "$SPEAKER_ENABLE_PROC_ENTRY"
+    else
+        echo "enable_speakers not supported yet"
+    fi
+}
+
+
+######################################################################
+# Function:    enable_headphones
+# Purpose:     Enable the headphone channels
+# Paramters:   none
+# Returns:     none
+# Assumptions: Device supports disabling/enabling of headphone channels
+#               (Mario DOES NOT support disabling of headphones)
+######################################################################
+enable_headphones()
+{
+    # Mario's headphone jack is always enabled
+    vmsg "enable_headphones"
+}
+
+
+######################################################################
+# Function:    disable_headphones
+# Purpose:     Disable the headphone channels
+# Paramters:   none
+# Returns:     none
+# Assumptions: Device supports disabling/enabling of headphone channels
+#               (Mario DOES NOT support disabling of headphones)
+######################################################################
+disable_headphones()
+{
+    # Mario doesn't support disabling headphone jack...
+    vmsg "disable_headphones"
+}
+
+
+
+######################################################################
+# Function:    enable_channel
+# Purpose:     Used to enable a sound channel.
+# Paramters:   Channel(s) to enable.  
+#               Valid options are:
+#                   CHANNEL_ALL
+#                   CHANNEL_NONE
+#                   CHANNEL_HP_LEFT
+#                   CHANNEL_HP_RIGHT
+#                   CHANNEL_HP_STEREO
+#                   CHANNEL_SPEAKER_LEFT
+#                   CHANNEL_SPEAKER_RIGHT
+#                   CHANNEL_SPEAKER_STEREO
+#                   CHANNEL_ALL_SPEAKER
+# Returns:     none
+# Side Effect: none
+######################################################################
+enable_channel()
+{
+    CHANNEL=$1
+
+    vmsg "enable_channel(${CHANNEL})"
+
+    case "$1" in
+        $CHANNEL_ALL | $CHANNEL_NONE | $CHANNEL_HP_LEFT | $CHANNEL_HP_RIGHT | \
+        $CHANNEL_HP_STEREO | $CHANNEL_SPEAKER_LEFT | \
+        $CHANNEL_SPEAKER_RIGHT | $CHANNEL_SPEAKER_STEREO | $CHANNEL_ALL_SPEAKER)
+            # Channel is valid
+            ;;
+
+        *)
+            # Channel is not valid
+            echo "Invalid channel option $1."
+            echo "Value must be between $CHANNEL_NONE and $CHANNEL_ALL_SPEAKER."
+            exit 1;
+    esac
+
+    #
+    # Enable the specified channel(s)
+    #
+    case "$CHANNEL" in 
+
+        $CHANNEL_ALL)
+            # Set all output channels to stereo
+            enable_speakers
+            set_balance "$EVEN_BALANCE"
+            unmute
+            ;;
+
+        $CHANNEL_NONE)
+            # Set all output channels to stereo, muted
+            enable_speakers
+            mute
+            ;;
+
+        $CHANNEL_HP_STEREO)
+            enable_headphones
+            set_balance "$EVEN_BALANCE"
+            unmute
+            ;;
+
+        $CHANNEL_HP_LEFT)
+            enable_headphones
+            set_balance "$FULL_LEFT"
+            unmute
+            ;;
+
+        $CHANNEL_HP_RIGHT)
+            enable_headphones
+            set_balance "$FULL_RIGHT"
+            unmute
+            ;;
+
+        $CHANNEL_SPEAKER_STEREO | $CHANNEL_ALL_SPEAKER)
+            enable_speakers
+            set_balance "$EVEN_BALANCE"
+            unmute
+            ;;
+
+        $CHANNEL_SPEAKER_LEFT)
+            enable_speakers
+            set_balance "$FULL_LEFT"
+            unmute
+            ;;
+
+        $CHANNEL_SPEAKER_RIGHT)
+            enable_speakers
+            set_balance "$FULL_RIGHT"
+            unmute
+            ;;
+
+        *)
+            ;;
+    esac
+
+}
+
+
+######################################################################
+# Function:    disable_channel
+# Purpose:     Used to disable a sound channel.
+# Paramters:   Channel(s) to disable.  
+#               Valid options are:
+#                   CHANNEL_ALL
+#                   CHANNEL_NONE
+#                   CHANNEL_HP_LEFT
+#                   CHANNEL_HP_RIGHT
+#                   CHANNEL_HP_STEREO
+#                   CHANNEL_SPEAKER_LEFT
+#                   CHANNEL_SPEAKER_RIGHT
+#                   CHANNEL_SPEAKER_STEREO
+#                   CHANNEL_ALL_SPEAKER
+# Returns:     none
+######################################################################
+disable_channel()
+{
+    CHANNEL=$1
+    vmsg "disable_channel(${CHANNEL})"
+    case "$CHANNEL" in
+        $CHANNEL_ALL | $CHANNEL_NONE | $CHANNEL_HP_LEFT | $CHANNEL_HP_RIGHT | \
+        $CHANNEL_HP_STEREO | $CHANNEL_SPEAKER_LEFT | \
+        $CHANNEL_SPEAKER_RIGHT | $CHANNEL_SPEAKER_STEREO | $CHANNEL_ALL_SPEAKER)
+            # Channel is valid
+            ;;
+
+        *)
+            # Channel is not valid
+            echo "Invalid channel option $CHANNEL."
+            echo "Value must be between $CHANNEL_NONE and $CHANNEL_ALL_SPEAKER."
+            exit 1;
+    esac
+
+
+    #
+    # Disable the specified channel(s)
+    #
+    case "$CHANNEL" in 
+        $CHANNEL_ALL)
+            # Set all output channels to stereo
+            disable_speakers
+            disable_headphones
+            mute
+            ;;
+
+        $CHANNEL_HP_STEREO)
+            disable_headphones
+            ;;
+
+        $CHANNEL_HP_LEFT)
+            set_hp_balance "$FULL_RIGHT"
+            mute
+            ;;
+
+        $CHANNEL_HP_RIGHT)
+            # Don't think we have individual control 
+            # over LEFT HP vs. FULL speaker
+            set_hp_balance "$FULL_LEFT"
+            mute
+            ;;
+
+        $CHANNEL_SPEAKER_STEREO | $CHANNEL_ALL_SPEAKER)
+            disable_speakers
+            mute
+            ;;
+
+        $CHANNEL_SPEAKER_LEFT)
+            set_speaker_balance "$FULL_RIGHT"
+            mute
+            ;;
+
+        $CHANNEL_SPEAKER_RIGHT)
+            set_speaker_balance "$FULL_RIGHT"
+            mute
+            ;;
+
+        $CHANNEL_NONE|*)
+            ;;
+
+    esac
+}
+
+
+######################################################################
+# Function:    audio_set_parms
+# Purpose:     Set channel balance and volume out.
+# Paramters:   channel - channel(s) to enable
+#              volume - volume to set
+# Returns:     none
+######################################################################
+audio_set_parms()
+{
+    enable_channel $1
+    set_volume_out  $2
+}
+
+
+######################################################################
+# Function:    set_volume_in
+# Purpose:     Set all input volume sources to user defined level
+# Paramters:   level - desired volume level as a percentage of maximum
+# Returns:     none
+######################################################################
+set_volume_in()
+{
+    # No mic / volume in for Mario...
+    vmsg "set_volume_in"
+}
+
+
+######################################################################
+# Function:     audio_set_volume_out
+# Purpose:      Remember the audio volume setting (set the volume variable)
+# Paramters:    volume to remember
+# Returns:      none
+# Side Effect:  Sets AUDIO_VOLUME
+######################################################################
+audio_set_volume_out()
+{
+    AUDIO_VOLUME=$1
+}
+
+
+######################################################################
+# Function:     audio_get_volume_out
+# Purpose:      Return the remembered audio volume setting
+# Paramters:    none
+# Returns:      Last volume set via audio_set_volume_out()
+######################################################################
+audio_get_volume_out()
+{
+    return $AUDIO_VOLUME
+}
+
+
+######################################################################
+# Function:     audio_restore_volume_out
+# Purpose:      Restore the actual volume to the last remembered volume.
+# Paramters:    none
+# Returns:      none
+# Side Effects: Adjusts volume
+######################################################################
+audio_restore_volume_out()
+{
+    set_volume_out $AUDIO_VOLUME
+}
+
+
+######################################################################
+# Function:    set_volume_out
+# Purpose:     Sets the device output volume
+# Paramters:   Number between 0 and 100 representing percentage of 
+#               maximum volume to set device to.
+#
+#               This function will set ALL possible output volumes
+# Returns:     none
+# Side Effects: All output channels will be set to user-defined volume.
+######################################################################
+set_volume_out()
+{
+    # Verify parameter is integer between 0 and 100
+    LEVEL=$1
+    nonums="$(echo $LEVEL |  sed 's/[0-9]//g')"
+    if [ ! -z "$nonums" ] ; then
+        echo "Volume percentage '$LEVEL' must be an integer value."
+        exit 0
+    elif [ $LEVEL -gt 100 ]; then
+        echo "Volume percentage '$LEVEL' must be integer between 0 and 100."
+        exit 0
+    fi
+
+if ( is_Shasta ); then
+    # Shasta Device
+    let "LEVEL = $LEVEL"			#mario 0-14, shasta 0-100
+else
+    # Mario Device
+    let "LEVEL = $LEVEL * 14 / 100"	#mario 0-14, shasta 0-100
+fi
+
+    # Set volume to user-defined level
+    vmsg "set_volume_out:  ${LEVEL}"%
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        lipc-set-prop $AUDIO_DBUS_ENTRYPOINT "Volume" "$LEVEL" > /dev/null 2>&1
+    else
+        echo "set_volume_out not supported yet"
+    fi 
+}
+
+
+
+######################################################################
+# Function:    get_volume_out
+# Purpose:     Gets the device output volume
+# Paramters:   none
+# Returns:     Echoes the current volume out setting
+######################################################################
+get_volume_out()
+{
+    # Get volume 
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        LEVEL=`lipc-get-prop $AUDIO_DBUS_ENTRYPOINT "Volume"`
+        vmsg "get_volume_out:  ${LEVEL}"%
+        echo "${LEVEL}"
+    else
+        echo "get_volume_out not supported yet"
+    fi
+}
+
+
+
+######################################################################
+# Function:    set_speaker_volume
+# Purpose:     Sets the device speaker output volume
+# Paramters:   Number between 0 and 100 representing percentage of 
+#               maximum volume to set device to.
+#
+#               This function will set ALL possible output volumes
+# Returns:     none
+# Side Effects: All output channels (headphones and speakers) will be 
+#               set to user-defined volume.
+######################################################################
+set_speaker_volume()
+{
+    set_volume_out "$@"
+}
+
+
+######################################################################
+# Function:     set_hp_volume
+# Purpose:      Sets the device headphone output volume
+# Paramters:    Number between 0 and 100 representing percentage of 
+#               maximum volume to set device to.
+#
+#               This function will set ALL possible output volumes
+# Returns:      none
+# Side Effects: All output channels (headphones and speakers) will be 
+#               set to user-defined volume.
+######################################################################
+set_hp_volume()
+{
+    set_volume_out "$@"
+}
+
+
+
+######################################################################
+# Function:     verify_audio_system_support
+# Purpose:      Verify that all system support required for the audio
+#               diagnostics is in the system (tools are present and
+#               executable, lipc calls are supported, etc)
+# Paramters:    none
+# Returns:      0        - Passed system software support verification
+#               Non-zero - Failed system software support verification
+#                   Failure results include:
+#                       1 - Audio Play tool is missing/broken
+#                       2 - Volume command not supported
+#                       3 - Balance command not supported
+# Side Effect:  none
+######################################################################
+verify_audio_system_support()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 0 ]; then
+        echo "verify_audio_system_support not using audio server"
+        return
+    fi
+    #
+    # Verify Audio Mixer App
+    #
+    #if ! [ -x ${RUN_MIX_TOOL} ]; then
+    #    vmsg "Audio Mixer tool $RUN_MIX_TOOL is missing."
+    #    failure "Audio Mixer tool missing."
+    #    return $AUDIO_MIX_TOOL_BROKEN
+    #fi
+
+    #
+    # Verify Audio Play App
+    #
+    if ! [ -x ${RUN_PLAY_TOOL} ]; then
+        echo "Audio Play tool $RUN_PLAY_TOOL is missing"
+        failure "Audio Play tool missing."
+        return $AUDIO_PLAY_TOOL_BROKEN
+    fi
+
+    #
+    # Verify Audio Sub-System support for lipc calls
+    #
+    lipc-get-prop "$AUDIO_DBUS_ENTRYPOINT" "Volume" > /dev/null 2>&1
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        echo "Audio sub-system missing lipc Volume support"
+        failure "Audio Volume call not supported."
+        return $AUDIO_VOLUME_TOOL_BROKEN
+    fi
+if [ 1 -eq 0 ]; then		#balance not support on mario devices
+    lipc-get-prop "$AUDIO_DBUS_ENTRYPOINT" "Balance" > /dev/null 2>&1
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        echo "Audio sub-system missing lipc Balance support"
+        failure "Audio Balance call not supported."
+        return $AUDIO_BALANCE_TOOL_BROKEN
+    fi
+fi
+    if ! [ -f "$SPEAKER_ENABLE_PROC_ENTRY" ]; then
+        echo "Proc entry for speaker control not there"
+        echo "Entry at $SPEAKER_ENABLE_PROC_ENTRY"
+        return $AUDIO_SPEAKER_ENABLE_BROKEN
+    fi
+
+
+    # If we made it here, all's good.
+    return 0
+}
+
+######################################################################
+# Function:     get_speaker_volume
+# Purpose:      Return the currently set speaker volume on the device
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Echo's the volume
+######################################################################
+get_speaker_volume()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        echo `lipc-get-prop "$AUDIO_DBUS_ENTRYPOINT" "Volume"`
+    else
+        echo "get_speaker_volume not supported yet"
+    fi
+}
+
+
+######################################################################
+# Function:     get_hp_volume
+# Purpose:      Return the currently set headphone volume on the device
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Echo's the volume
+######################################################################
+get_hp_volume()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        echo `lipc-get-prop "$AUDIO_DBUS_ENTRYPOINT" "Volume"`
+    else
+        echo "get_hp_volume not supported yet"
+    fi
+}
+
+
+######################################################################
+# Function:     get_speaker_balance
+# Purpose:      Return the currently set audio channel balance on the 
+#               device
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Echo's the balance
+######################################################################
+get_speaker_balance()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        echo `lipc-get-prop "$AUDIO_DBUS_ENTRYPOINT" "Balance"`
+    else
+        echo "get_speaker_balance not supported yet"
+    fi
+}
+
+
+######################################################################
+# Function:     get_hp_balance
+# Purpose:      Return the currently set audio headphone channel 
+#               balance on the device
+# Paramters:    none
+# Returns:      none
+# Side Effect:  Echo's the balance
+######################################################################
+get_hp_balance()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        echo `lipc-get-prop "$AUDIO_DBUS_ENTRYPOINT" "Balance"`
+    else
+        echo "get_hp_balance not supported yet"
+    fi
+}
+
+
+######################################################################
+# Function:    mute
+# Purpose:     Mute the device.
+# Paramters:   none
+# Returns:     none
+# Assumptions: Setting each output channel volume to 0 will mute device
+# Side Effect: device is muted
+#               Sets PRE_MUTE_HP_VOLUME and PRE_MUTE_SPEAKER_VOLUME
+#               variables....
+######################################################################
+mute()
+{
+    if [ "$MUTE" -eq 0 ]; then
+        export MUTE=1
+        # Set volume to user-defined level
+        export PRE_MUTE_HP_VOLUME=`get_hp_volume`
+        export PRE_MUTE_SPEAKER_VOLUME=`get_speaker_volume`
+        set_hp_volume "$MUTE_AUDIO"
+        set_speaker_volume "$MUTE_AUDIO"
+    fi
+}
+
+
+######################################################################
+# Function:    unmute
+# Purpose:     Unmute the device.
+# Paramters:   none
+# Returns:     none
+# Side Effect: device is unmuted
+######################################################################
+unmute()
+{
+    if [ "$MUTE" -eq 1 ]; then
+        # Set volume to user-defined level
+        set_hp_volume "$PRE_MUTE_HP_VOLUME"
+        set_speaker_volume "$PRE_MUTE_SPEAKER_VOLUME"
+        export MUTE=0
+    fi
+}
+
+
+######################################################################
+# Function:     stop_atlas_sound_loop_tool
+# Purpose:      Stop the playAtlasSoundTool from running
+# Paramters:    none
+# Returns:      none
+######################################################################
+stop_atlas_sound_loop_tool()
+{
+    if [ $ATLAS_SOUND_PID -ne 0 ]; then
+        echo "Killing process having PID of $ATLAS_SOUND_PID"
+        kill -9 $ATLAS_SOUND_PID
+        export ATLAS_SOUND_PID=0
+    fi
+}
+
+
+######################################################################
+# Function:     start_atlas_sound_loop_tool
+# Purpose:      Start the playAtlasSoundTool running in background,
+#               store off it's PID in ATLAS_SOUND_PID
+# Paramters:    none
+# Returns:      none
+######################################################################
+start_atlas_sound_loop_tool()
+{
+    "$DIAG_TOOL_ROOT"/playAtlasTestSound $vol $chan_enabled & > /dev/null 2>&1
+    if [ $? ]; then
+        export ATLAS_SOUND_PID=$!
+    fi
+}
+
+
+######################################################################
+# Function:     audio_start_atlas_sound
+# Purpose:      Starts playing an audio file in the background.
+# Paramters:    enabled_channels - channel(s) to enable; one of:
+#                   CHANNEL_NONE
+#                   CHANNEL_ALL
+#                   CHANNEL_HP_LEFT
+#                   CHANNEL_HP_RIGHT
+#                   CHANNEL_HP_STEREO
+#                   CHANNEL_SPEAKER_LEFT
+#                   CHANNEL_SPEAKER_RIGHT
+#                   CHANNEL_SPEAKER_STEREO
+#                   CHANNEL_ALL_SPEAKER
+#               volume - value between 0 and 100
+# Returns:      none
+# Side Effect:  Starts playing sound in background
+######################################################################
+audio_start_atlas_sound()
+{
+    chan_enabled="$1"
+    vol="$2"
+
+    # If user didn't pass channel, set it to a default (headphones)
+    if [ -z "$chan_enabled" ]; then
+        chan_enabled=$CHANNEL_HP_STEREO
+    fi
+
+    # If user didn't pass volume, set it to a default
+    if [ -z "$vol" ]; then
+        vol=$ATLAS_TEST_AUDIO_VOLUME
+    fi
+
+    #
+    # Run aplayd script so we get continuous sound
+    #
+    start_atlas_sound_loop_tool
+
+    #
+    # Wait for sound to start...
+    #
+    wait_for_process_start "$PCM_TOOL_NAME"
+}
+    
+
+
+######################################################################
+# Function:     audio_stop_atlas_sound
+# Purpose:      Stops the audio file that's playing in the background.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  kills all audio play tool processes
+######################################################################
+audio_stop_atlas_sound()
+{
+    # Kill the play script
+    stop_atlas_sound_loop_tool
+
+    # Kill the background player process.
+    killall -9 "$_AUDIO_TOOL_USED" > /dev/null 2>&1
+
+    #
+    # Wait for sound to stop...
+    #
+    wait_for_process_stop "$_AUDIO_TOOL_USED"
+}
+    
+######################################################################
+# Function:     audio_start_sound
+# Purpose:      Starts playing an audio file in the background.
+# Paramters:    enabled_channels - channel(s) to enable; one of:
+#                   CHANNEL_NONE
+#                   CHANNEL_ALL
+#                   CHANNEL_HP_LEFT
+#                   CHANNEL_HP_RIGHT
+#                   CHANNEL_HP_STEREO
+#                   CHANNEL_SPEAKER_LEFT
+#                   CHANNEL_SPEAKER_RIGHT
+#                   CHANNEL_SPEAKER_STEREO
+#                   CHANNEL_ALL_SPEAKER
+#               volume - value between 0 and 100
+# Returns:      none
+# Side Effect:  Starts playing sound in background
+######################################################################
+audio_start_sound()
+{
+    chan_enabled="$1"
+    vol="$2"
+
+    # If user didn't pass channel, set it to a default (all on)
+    if [ -z "$chan_enabled" ]; then
+        chan_enabled=$CHANNEL_ALL
+        echo "audio_start_sound() enabling default chan_enabled = $chan_enabled"
+    fi
+
+    # If user didn't pass volume, set it to a default
+    if [ -z "$vol" ]; then
+        vol=$DEFAULT_VOLUME
+        echo "audio_start_sound() enabling default volume $vol"
+    fi
+
+    # Determine which tool we're using, then start sound playing...
+    # Run aplayd script so we get continuous sound
+    case "$chan_enabled" in
+        $CHANNEL_ALL_SPEAKER)
+            export _AUDIO_TOOL_USED="$APLAY_TOOL_NAME"
+            ${RUN_PLAY_TOOL} $vol $chan_enabled & 2>&1
+            ;;
+        *)
+            export _AUDIO_TOOL_USED="$PCM_TOOL_NAME"
+            ${RUN_PLAY_TOOL} $vol $chan_enabled & > /dev/null 2>&1
+            ;;
+    esac
+
+    #
+    # Wait for sound to start...
+    #
+    wait_for_process_start "$_AUDIO_TOOL_USED"
+}
+
+
+######################################################################
+# Function:     audio_stop_sound
+# Purpose:      Stops the audio file that's playing in the background.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  kills all audio play tool processes
+######################################################################
+audio_stop_sound()
+{
+    # Kill the play script
+    ${RUN_KILL_PLAY_TOOL} > /dev/null 2>&1
+
+    # Kill the background player process.
+    killall -9 "$_AUDIO_TOOL_USED" > /dev/null 2>&1
+
+    # Determine which tool we're using...
+    case "$chan_enabled" in
+        $CHANNEL_SPEAKER_LEFT | $CHANNEL_HP_LEFT)
+            export NEW_AUDIO_TOOL_USED="$PCM_TOOL_NAME"
+            ;;
+        $CHANNEL_SPEAKER_RIGHT | $CHANNEL_HP_RIGHT)
+            export NEW_AUDIO_TOOL_USED="$PCM_TOOL_NAME"
+            ;;
+        $CHANNEL_SPEAKER_STEREO | $CHANNEL_HP_STEREO)
+            export NEW_AUDIO_TOOL_USED="$PCM_TOOL_NAME"
+            ;;
+        *)
+            export NEW_AUDIO_TOOL_USED="$APLAY_TOOL_NAME"
+            ;;
+    esac
+
+    #
+    # Wait for sound to stop...
+    #
+    wait_for_process_stop "$NEW_AUDIO_TOOL_USED"
+}
+    
+
+######################################################################
+# Function:     audio_hp_detect
+# Purpose:      Determine if the headphones are inserted or not
+# Paramters:    none
+# Returns:      HEADPHONES_NOT_DETECTED - headphones are not inserted
+#               HEADPHONES_DETECTED - headphones have been detected
+# Assumptions:  If the file /sys/devices/platform/mxc_ALSA/hsconnect
+#               exists, a headset is connected.  If not, no headset.
+######################################################################
+audio_hp_detect()
+{
+    vmsg "audio_hp_detect()"
+    # If file there, headset is connected
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        if [ -f /sys/devices/platform/mxc_ALSA/hsconnect ]; then
+            return $HEADPHONES_DETECTED
+        else
+            return $HEADPHONES_NOT_DETECTED
+        fi
+    else
+        echo "audio_hp_detect not supported yet"
+        return $HEADPHONES_NOT_DETECTED
+    fi
+    
+}
+
+
+######################################################################
+# Function:     audio_wait_hp_detect
+# Purpose:      Wait until we detect that the headphones have been
+#               inserted before continuing.
+#               To-Do : Allows user to exit if HP detection isn't working
+#
+#               In the case of the user clearing the screen, we return
+#               that the headphones are in the direction the caller was
+#               waiting on, but will cause sub-test failure for hp
+#               detection to get reported.
+# Paramters:    direction - which event to look for:
+#                   "in" - wait for headphones to be inserted
+#                   "out" - wait for headphones to be removed
+# Returns:      HEADPHONES_NOT_DETECTED - headphones are not inserted
+#               HEADPHONES_DETECTED - headphones have been detected
+######################################################################
+audio_wait_hp_detect()
+{
+    vmsg "audio_wait_hp_detect($1)"
+    hp_direction=$1
+    case "$hp_direction" in
+        in|IN)
+            audio_hp_detect
+            status="$?"
+            if [ $status -eq $HEADPHONES_NOT_DETECTED ]; then
+                wait_count=0
+                DONE=0
+                while [ $DONE -eq 0 ]; do
+                    sleep 1
+                    audio_hp_detect
+                    status="$?"
+                    if [ $status -eq $HEADPHONES_DETECTED ]; then
+                        DONE=1
+                    else
+                        let wait_count+=1
+                        if [ $wait_count -gt $HP_DETECT_TIMEOUT ]; then
+                            DONE=1
+                        fi
+                    fi
+                done
+            fi
+            ;;
+        out|OUT)
+            audio_hp_detect
+            status="$?"
+            if [ $status -eq $HEADPHONES_DETECTED ]; then
+                wait_count=0
+                DONE=0
+                while [ $DONE -eq 0 ]; do
+                    sleep 1
+                    audio_hp_detect
+                    status=$?
+                    if [ $status -eq $HEADPHONES_NOT_DETECTED ]; then
+                        DONE=1
+                    else
+                        let wait_count+=1
+                        if [ $wait_count -gt $HP_DETECT_TIMEOUT ]; then
+                            DONE=1
+                        fi
+                    fi
+                done
+            fi
+            ;;
+        *)
+            echo "ERROR - bad value $hp_direction passed to audio_wait_hp_detect"
+            status=$HEADPHONES_NOT_DETECTED
+            ;;
+    esac
+
+    return $status
+}
+
+
+######################################################################
+# Function:     audio_fct_wait_hp_detect
+# Purpose:      Wait until we detect that the headphones have been
+#               inserted OR we reach our maximum wait timeout.
+#
+#               This routine is designed for use by the FCT test
+#
+# Paramters:    direction - which event to look for:
+#                   "in" - wait for headphones to be inserted
+#                   "out" - wait for headphones to be removed
+# Returns:      0 - Saw the headphone event
+#               1 - Timed out waiting for event - no event seen 
+#               2 - direction not supported
+######################################################################
+audio_fct_wait_hp_detect()
+{
+    vmsg "audio_wait_hp_detect_or_timeout($1, $2)"
+    hp_direction=$1
+    case "$hp_direction" in
+        in|IN)
+            hp_dir_status=$HEADPHONES_DETECTED;
+            ;;
+        out|OUT)
+            hp_dir_status=$HEADPHONES_NOT_DETECTED;
+            ;;
+        *)
+            echo "ERROR - bad value $hp_direction passed to audio_fct_wait_hp_detect"
+            return 2
+            ;;
+    esac
+
+    hp_wait_count=0
+    while [ 1 ]; do
+        # Check status
+        audio_hp_detect
+        status="$?"
+        if [ $status -eq $hp_dir_status ]; then
+            return 0
+        fi
+
+        # If we waited long enough, time out and fail now...
+        if [ $hp_wait_count -ge $FCT_HP_WAIT_TIMEOUT ]; then
+            failure "FCT Headphone $hp_direction Detection"
+            return 1
+        fi
+
+        # Not ready yet, poor-man sleep for a 1/10 second and recheck...
+        KEY=`$GET_KEYBOARD_INPUT 100`
+
+        # Indicate we waited another 1/10 of a second
+        let hp_wait_count+=1
+    done
+}
+
+
+######################################################################
+# Function:    do_run_mode_audio
+# Purpose:     Play an audio tone until the user says stop.
+# Paramters:   channels - constant representing channels to enable.
+#              volume - volume to run test at.
+# Returns:     none
+######################################################################
+do_run_mode_audio()
+{
+    LOCAL_CHANNELS_ENABLED="$1"
+    LOCAL_SPEAKER_AUDIO_VOLUME="$2"
+
+    # Enable the speakers, start playing a sound at max volume
+    THE_CURRENT_VOLUME=$LOCAL_SPEAKER_AUDIO_VOLUME
+    audio_start_sound $LOCAL_CHANNELS_ENABLED $LOCAL_SPEAKER_AUDIO_VOLUME
+
+    clear_screen
+    ${DOUT} -n 17 4 "Audio Run Mode"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+
+    # Force loop to draw the rest of the screen
+    REDRAW=1
+
+    #
+    # Get the key request
+    #
+    DONE=0
+    while [ $DONE -ne 1 ]; do
+        if [ $REDRAW -eq 1 ]; then
+            erase_line 9
+            ${DOUT} -n 4 7 "Audio is enabled and currently playing at"
+            ${DOUT} -n 4 9 "$THE_CURRENT_VOLUME percent of maximum volume."
+            ${DOUT} -n 4 11 "Use the volume buttons to adjust volume."
+            ${DOUT} 5 15 "Press $EXIT_KEY_LABEL to return to run mode menu..."
+            REDRAW=0
+        fi
+
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $VOLUME_UP)
+                if [ $THE_CURRENT_VOLUME -lt $MAX_VOLUME ]; then
+                    let THE_CURRENT_VOLUME+=1
+                    set_speaker_volume $THE_CURRENT_VOLUME
+                    REDRAW=1
+                fi
+                ;;
+
+            $VOLUME_DOWN)
+                if [ $THE_CURRENT_VOLUME -gt $MIN_VOLUME ]; then
+                    let THE_CURRENT_VOLUME-=1
+                    set_speaker_volume $THE_CURRENT_VOLUME
+                    REDRAW=1
+                fi
+                ;;
+
+            $EXIT_KEY)
+                DONE=1
+                ;;
+
+            *)
+                REDRAW=1
+                ;;
+        esac
+    done;
+
+    # Shut the audio off - must be pretty annoying at this point
+    audio_stop_sound
+    disable_speakers
+}
+
+
+setAtlasClock()
+{
+    "$DIAG_TOOL_ROOT/pmic" write 41 $1 > /dev/null 2>&1
+}
+
+
+overclockAtlas()
+{
+    "$DIAG_TOOL_ROOT"/pmic wor 41 9 7 3 > /dev/null 2>&1
+}
+
+
+restoreAtlasClock()
+{
+    "$DIAG_TOOL_ROOT"/pmic write 41 $ORIG_ATLAS_CLOCK > /dev/null 2>&1
+}
+
+
+getAtlasClock()
+{
+    VAL=`${READ_ATLAS_CLOCK}`
+    let CLOCK_VAL=`echo "$VAL" | grep "result =" | \
+        sed -e 's/result = \(0x[0-9A-F]*\) : [01]* [01]* [01]* [01]* [01]*/\1/g'`
+    echo "$CLOCK_VAL"
+}
+
+run_atlas_test()
+{
+    # Get sound playing
+    audio_start_atlas_sound
+
+    # Let user know what's going on
+    clear_screen
+    banner="Atlas Chip Verification"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    ${DOUT} -n 5 7 "A sound should be playing now."
+    ${DOUT} -n 5 9 "Once the test has been started, you will"
+    ${DOUT} -n 5 11 "hear the tone change."
+    ${DOUT} -n 5 15 "IF it becomes noise, indicate FAIL."
+    ${DOUT} -n 5 17 "IF tone gets higher but is still audible,"
+    ${DOUT} -n 5 19 "indicate PASS."
+    ${DOUT} -n 5 23 "Press the $SUCCESS_KEY_LABEL now to start the test"
+    ${DOUT} 5 25 "Press the $EXIT_KEY_LABEL to cancel the test"
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                DONE=1
+                ;;
+            $EXIT_KEY)
+                audio_stop_atlas_sound
+                return 2
+                ;;
+            *)
+                ;;
+        esac
+    done
+
+    # User indicated ready to start test
+
+    # Grab original Value
+    export ORIG_ATLAS_CLOCK=`getAtlasClock`
+
+    # Overclock the Atlas chip
+    overclockAtlas
+
+    # Ask user if audio is OK or not
+    clear_screen
+    ${DOUT} -n 5 7 "A sound should be playing now."
+    ${DOUT} -n 5 11 "Press $FAILURE_KEY_LABEL if the sound is noise (FAIL)"
+    ${DOUT} 5 13 "Press $SUCCESS_KEY_LABEL if tone is higher, but ok (PASS)"
+    _done=0
+    _local_fail=0
+    while [ $_done -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        case "$KEY" in
+            $SUCCESS_KEY)
+                success "Atlas Chip Verified OK"
+                _done=1
+                ;;
+            $FAILURE_KEY)
+                failure "Atlas Chip Found To Be BAD"
+                _local_fail=1
+                _done=1
+                ;;
+            *)
+                #ECHO_VAL=`getAtlasClock`
+                #printf "Read Atlas register as 0x%x\n" $ECHO_VAL
+                ;;
+        esac
+    done
+
+    # User indicated pass/fail, stop sound from playing
+    audio_stop_atlas_sound
+
+    # Restore the Atlas clock to normal
+    restoreAtlasClock
+
+    # Return failure status
+    return $_local_fail
+}
+
+
+do_display_tts_text()
+{
+    # Put up the text we'll do TTS on...
+    clear_screen
+    $FILE_TO_SCREEN $TTS_TEST_FILE
+
+    # Now put up the "Select X to cancel" banner across bottom....
+    erase_line  38
+    ${DOUT} 5 38 "Select $EXIT_KEY_LABEL to cancel test."
+}
+
+do_start_tts()
+{
+    # Start up the fifo feeder
+
+    # Use this if you need continuous til cancelled behavior
+    $FEED_TTS_TOOL "$TTS_TEST_FILE" "$TTS_FIFO" &
+
+    # or use this if you need "read once and stop" behavior
+    #cat "$TTS_TEST_FILE" > "$TTS_FIFO" &
+
+    # Start TTS up....
+    # the file setting is arbitrary, but must exist and must start with tts:///
+    lipc-set-prop "$AUDIO_DBUS_ENTRYPOINT" URI tts:///var/tmp/ttsUSFifo
+    lipc-set-prop "$TTS_DBUS_ENTRYPOINT" TtsISpeed 50
+    lipc-set-prop "$AUDIO_DBUS_ENTRYPOINT" Control 1
+}
+
+do_pause_tts()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 1 ]; then
+        lipc-set-prop "$AUDIO_DBUS_ENTRYPOINT" Control 2
+    fi
+}
+
+
+do_stop_tts()
+{
+    # Stop the fifo feed tool
+    $KILL_FEED_TTS_TOOL
+    wait_for_process_stop "$FEED_TTS_TOOL_NAME"
+
+    # Stop the actual TTS engine
+    lipc-set-prop "$AUDIO_DBUS_ENTRYPOINT" Control 3
+    lipc-set-prop "$AUDIO_DBUS_ENTRYPOINT" Kill 1
+
+    # Wait for audio engine to finish
+    lipc-wait-event "$AUDIO_DBUS_ENTRYPOINT" audioAvailable
+}
+
+
+do_run_tts_test()
+{
+    if [ -n "$USE_AUDIO_SERVER" ] && [ $USE_AUDIO_SERVER -eq 0 ]; then
+        return 
+    fi
+    
+    if ! [ -f "$TTS_TEST_FILE" ]; then
+        echo "$TTS_TEST_FILE does not exist."
+        return
+    fi
+
+    # Tell user what's going on....
+    do_display_tts_text
+
+    # Get TTS going
+    do_start_tts
+
+    #
+    # Wait for operator to cancel test
+    #
+    wait_for_key $EXIT_KEY
+
+    # Stop TTS stream
+    do_stop_tts
+}
+
+
+######################################################################
+# Function:     audio_hal_init
+# Purpose:      First verifies that the system support required to run
+#               the audio diagnostic is present and working.  If it is,
+#               this routine initializes sound system so that 
+#               subsequent calls to these audio HAL primitives will work.
+# Paramters:    none
+# Returns:      0        - Success - Audio system initialized properly
+#               Non-zero - Failure - System software support missing/broken
+#                   Failure results include:
+#                       1 - Audio Play tool is missing/broken
+#                       2 - Volume command not supported
+#                       3 - Balance command not supported
+# Side Effect:  Mutes volume and disables all channels
+######################################################################
+audio_hal_init()
+{
+    #
+    # Verify system support / environment
+    #
+    verify_audio_system_support
+    RETVAL=$?
+    if [ $RETVAL -ne 0 ]; then
+        vmsg "verifry_audio_system_support failed with error $RETVAL"
+        return $RETVAL
+    fi
+
+    # Return success
+    return 0
+}
+
+
+######################################################################
+# Function:    audio_hal_exit
+# Purpose:     De-initialize / cleanup sound system test
+#               This routine will
+#                   1) Disable all audio channels
+#                   2) Mute the audio on the device
+# Paramters:   none
+# Returns:     none
+# Side Effect: Channels are disabled, volume out is muted
+######################################################################
+audio_hal_exit()
+{
+    if [ $AUDIO_CHANNELS_INITED -eq 1 ]; then
+        #   Disable sound channels, mute volume
+        disable_channel $CHANNEL_ALL
+        mute
+        AUDIO_CHANNELS_INITED=0
+    fi
+} 
+
+
+######################################################################
+# Function:    do_speaker_test
+# Purpose:
+# Paramters:   none
+# Returns:     none
+# Side Effect:
+######################################################################
+do_speaker_test()
+{
+    vmsg "Starting Speaker Test"
+
+    # Set audio to speakers, both channels
+    audio_start_sound $CHANNEL_SPEAKER_STEREO $DEFAULT_VOLUME_OUT
+
+    DONE=0
+    wait_count=0
+    # echo "start speaker test timer=($wait_count)"
+    while [ $DONE -eq 0 ]; do
+        process_running "pcm" > /dev/null 2>&1
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            echo "PCM tool is not running in speaker stereo!!"
+            audio_start_sound $CHANNEL_SPEAKER_STEREO $THE_CURRENT_VOLUME
+        fi
+
+        # Not ready yet, poor-man sleep for a 1/10 second and recheck...
+        KEY=`$GET_KEYBOARD_INPUT 100`
+
+        # Process key request
+        case "$KEY" in
+	     $VOLUME_UP)
+	         if [ $THE_CURRENT_VOLUME -lt $MAX_VOLUME ]; then
+            	      let THE_CURRENT_VOLUME+=1
+                    audio_set_parms $CHANNEL_SPEAKER_LEFT $THE_CURRENT_VOLUME
+            	  fi
+            ;;
+
+            $VOLUME_DOWN)
+        	  if [ $THE_CURRENT_VOLUME -gt $MIN_VOLUME ]; then
+            	      let THE_CURRENT_VOLUME-=1
+                    audio_set_parms $CHANNEL_SPEAKER_LEFT $THE_CURRENT_VOLUME
+            	  fi
+            ;;
+
+            *)
+            ;;
+
+        esac
+
+        # time out
+        let wait_count+=1
+        # echo "$wait_count"
+        if [ $wait_count -gt $HP_DETECT_TIMEOUT ]; then
+            DONE=1
+        fi
+    done
+
+    audio_stop_sound
+
+    vmsg "Exiting Speaker Test"
+}

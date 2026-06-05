@@ -1,0 +1,116 @@
+######################################################################
+#
+#  File:   moviNand.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   06/21/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Mario platform moviNand HAL layer for diagnostic moviNand scripts.
+#   This file defines various HAL routines based on the utility used for 
+#   testing the moviNand system.
+#
+#   Data Structures
+#       MOVI_ROOTFS_MD5_EXEMPT  - List of files exempt from test
+#
+#   Routines
+#       moviNand_hal_init()     - Hal initialization routine
+#       moviNand_hal_exit()     - Hal exit routine
+#
+######################################################################
+
+######################################################################
+#
+# List of files that are OK to fail MD5 sum
+#
+#   File:           /test/images/screen_saver_last
+#   Failure Reason: Page flipper test uses video script, which modifies this
+#                   file, so md5sum failure after video test is run is
+#                   expected.
+#
+#   File:           /etc/shadow
+#   Failure Reason: Password file changed after md5 list generated...
+#
+#   File:           /ENABLE_DIAGS
+#   Failure Reason: If diags is re-enabled for RMA mode, this file will already have been
+#                   deleted by last disable process.
+#
+#   File:           /opt/var/local/system/ENABLE_DIAGS
+#   Failure Reason: If operator created, it will fail as it's not exact original
+#
+#   File:           /usr/sbin/dmdld
+#   Failure Reason: May get deleted during early boot (it depends on the
+#                   WAN module configuration - QES versus WN2).
+#
+#   File:           /etc/init.d/rpinit
+#   Failure Reason: Gets deleted on first boot.
+#
+#   File:           /opt/eink/images/*.wbf
+#   Failure Reason: May get deleted during early boot by the video startup
+#                   script if it determines that it's not needed.  This
+#                   file may change name, but the ".wbf" and the path
+#                   will be the same.  We use ".*" in front of the known
+#                   base filename pattern for use by AWK to represent
+#                   "any characters followed by a .wbg"
+#
+#   File:           /usr/lib/libdmd_module.so.0.*
+#                   /usr/lib/libe725_module.so.0.*
+#                   /usr/lib/libe860_module-so.0.*
+#   Failure Reason: May get deleted during WAN diagnostic test by WAN 
+#                   software
+#
+#   File:           /test/bin/*
+#                   /test/ebook/*
+#   Failure Reason: Upon re-enabling diagnostics (RMA), these file are
+#                   not going to be there (instructed fix for NELL-3293)
+#
+#   File:           /opt/wan/firmware/*
+#   Failure Reason: Wan software deletes all sorts of misc stuff in here when the
+#                   WAN diagnostic is run, so we ignore all contents of this file
+#
+#   File:           /usr/sbin/ufbvncd
+#   Failure Reason: In svn # 33427, the factory_reset script added a line to 
+#                   remove the /usr/bin/ufbvncd.  This will cause movinand
+#                   test at RMA to fail (re-enabling diags after doing a 
+#                   factory reset)
+#   
+######################################################################
+export MOVI_ROOTFS_MD5_EXEMPT="/test/images/screen_saver_last /etc/shadow /opt/var/local/system/ENABLE_DIAGS /ENABLE_DIAGS /usr/sbin/dmdld /usr/lib/libdmd_module.so.0 /usr/lib/libe725_module.so.0 /usr/lib/libe860_module.so.0 /usr/lib/libdtp_module.so.0.1 /etc/init.d/rpinit /usr/sbin/ufbvncd /opt/wan/firmware/* /test/bin/* /test/ebook/* /opt/eink/images/.*.wbf /test/diags/factory/tests/wifi/art_files.tar"
+
+
+######################################################################
+# Function:    movinand_hal_init
+# Purpose:     Initialize moviNand system so that subsequent calls to 
+#               these moviNand HAL primitives will work.
+# Paramters:   none
+# Returns:     none
+# Assumptions: none
+# Side Effect: none
+######################################################################
+movinand_hal_init()
+{
+    #
+    # There's currently nothing to do for initialization
+    #
+    vmsg "movinand_hal_init()"
+}
+
+
+######################################################################
+# Function:    movinand_hal_exit
+# Purpose:     De-initialize / cleanup moviNand system test
+# Paramters:   none
+# Returns:     none
+# Assumptions: none
+# Side Effect: none
+######################################################################
+movinand_hal_exit()
+{
+    #
+    # There's currently nothing to do for tear down
+    #
+    vmsg "movinand_hal_exit()"
+}

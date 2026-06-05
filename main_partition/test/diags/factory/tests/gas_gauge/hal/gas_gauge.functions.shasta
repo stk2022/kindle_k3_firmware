@@ -1,0 +1,1174 @@
+#!/bin/sh
+######################################################################
+#
+#  File:  gas_gauge.functions.shasta
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   07/21/09
+#
+#  Copyright 2009, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#       Contains the hal layer for the gas gauge diagnostic on a 
+#       Mario platform.
+#
+#   Macros
+#       BATTERY_CAPACITY        - Echo's battery capacity string
+#       BATTERY_VOLTAGE         - Echo's battery voltage
+#       BATTERY_CURRENT         - Echo's battery current draw
+#       BATTERY_TEMPERATURE     - Echo's battery temperature in kelvin
+#
+#   Routines
+#       charger_draw_limit()    - Echo charger current limit
+#       charger()               - Turn the charger on or off
+#       do_wait_charger()       - Wait up to 10 seconds for charger to ready
+#       reset_last_battery_capacity - Reset the LAST_BATTERY_CAPACITY variable
+#                                   to the current capacity
+#       clear_last_battery_capacity - Sets LAST_BATTERY_CAPACITY to 0
+#                                   for testing purposes ONLY
+#       is_battery_at_limit()   - Determine if battery is at ship level
+#       charger_limit_charge()  - Drive battery to a given capacity by
+#                                   enabling or disabling the charger.
+#       charger_setting()       - Return current charger setting
+#       charger_setting_text()  - Echo's string of current charger setting
+#       is_charger_on()         - Returns whether charger is on or not
+#       gg_get_pmic_voltage()   - Return voltage read from PMIC
+#       gg_confirm_battery_id() - Confirm that the battery part number is as expected
+#       gas_gauge_hal_init()    - Hal initialization routine
+#       gas_gauge_hal_exit()    - Hal cleanup exit routine
+#       adjust_battery_to_ship_mode - Adjust battery capacity to ship level
+#       get_green_led_level  - Read battery level at which system sets green led
+#       set_green_led_level  - Set the battery level at which green light will light
+#       
+######################################################################
+
+######################################################################
+# Function:    charger_draw_limit
+# Purpose:     Return the current draw limit in mA
+# Paramters:   none
+# Returns:     echo's limit - string representing draw limit in mA
+#              Success/failure result returned from cat of sys entry:
+#                   0 - success
+#                   1 - failure
+# Side Effect: none
+######################################################################
+charger_draw_limit()
+{
+    # If entry not there, charger driver not there and thus charger off
+    charger_setting_text
+    return $?
+}
+
+
+######################################################################
+# Function:     do_wait_charger
+# Purpose:      Wait up to 30 seconds for charger to reach target 
+#               on/off state.  If state is ON, check for valid level
+# Paramters:    target_status - one of:
+#                   on - Wait for the charger to turn on
+#                   off - Wait for the charger to turn off
+#               target_level - one of:
+#                   0 - Level not important
+#                   1 - Level for On must be > 100 mA
+# Returns:      0 - Charger is in proper state
+#               1 - Charger did not reach proper state
+######################################################################
+do_wait_charger()
+{
+    target_status="$1"
+    wait_count=30
+
+    # Loop waiting for charger to ready, sleeping 1 second between loops
+    while [ $wait_count -gt 0 ]; do
+        is_charger_on
+        charger_status="$?"
+        case "$target_status" in
+            "on")
+                if [ $2 -eq 1 ]; then
+                    # Return pass if charger is on and greater than 100mA mode
+                    if [ $charger_status -eq 2 ]; then
+                        return 0
+                    fi
+                else
+                    # Return pass if charger is on, irrespective of level
+                    if [ $charger_status -ne 0 ]; then
+                        return 0
+                    fi
+                fi
+                ;;
+            "off")
+                if [ $charger_status -eq 0 ]; then
+                    return 0
+                fi
+                ;;
+            *)
+                ;;
+        esac
+
+        # If we're here, charger is not ready yet
+        let wait_count--
+        sleep 1
+    done
+
+    # If we're here, charger failed, return error status...
+    return 1
+}
+
+
+######################################################################
+# Function:     charger
+# Purpose:      Enable/disable the charger.
+# Paramters:    on - Turn the charger on
+#               off - turn the charger off
+# Returns:      none
+# Assumptions:  Can disable the charger by setting charger_state to 0
+######################################################################
+charger()
+{
+    if [ -f "$GG_CHARGER_STATE_ENTRY" ]; then
+        status="$1"
+        case "$status" in
+            on)
+                echo 1 > "$GG_CHARGER_STATE_ENTRY"
+                ;;
+            off)
+                echo 0 > "$GG_CHARGER_STATE_ENTRY"
+                ;;
+            *)
+                ;;
+        esac
+    else
+        echo "charger_state not available (connected to HOST?)"
+    fi
+}
+
+
+######################################################################
+# Function:     is_battery_at_limit
+# Purpose:      Determines if the battery is at the ship capacity.
+#				Battery must be between the LOWER and UPPER limits to pass.
+# Paramters:    no_log_error - if present, specifies whether to log the error
+# Returns:      0 - Battery is within upper and lower acceptable bounds
+#               1 - Battery is lower than specified limit
+#               2 - Battery is higher than specified limit
+######################################################################
+is_battery_at_limit()
+{
+    if [ $# -ge 1 ]; then
+        no_log_error=$1
+    else
+        no_log_error=0
+    fi
+    cap=`${BATTERY_CAPACITY}`
+    cap=`echo $cap | sed s/\%//g`
+
+    # Check if we're within' limits
+    if [ $cap -ge $RUN_IN_LOWER_CHARGE_LIMIT ] && [ $cap -le $RUN_IN_UPPER_CHARGE_LIMIT ]; then
+        do_local_echo "Battery capacity of $cap is within acceptable range."
+        return 0
+    fi
+
+    if ! [ $cap -ge $RUN_IN_LOWER_CHARGE_LIMIT ]; then
+        if [ $no_log_error -eq 0 ]; then
+            do_local_echo "Battery capacity of $cap is lower than acceptable range."
+        fi
+        return 1
+    else
+        if [ $no_log_error -eq 0 ]; then
+            do_local_echo "Battery capacity of $cap is higher than acceptable range."
+        fi
+        return 2
+    fi
+}
+
+
+######################################################################
+# Function:     get_battery_capacity
+# Purpose:      Echo's the battery capacity as a whole number
+# Paramters:    none
+# Returns:      0 - Success
+#               1 - Error reading battery capacity
+######################################################################
+get_battery_capacity()
+{
+    cap=`${BATTERY_CAPACITY}`
+    clc_err="$?"
+    if [ $clc_err -eq 0 ]; then
+        cap=`echo $cap | sed s/\%//g`
+        echo "$cap"
+        return 0
+    else
+        return 1
+    fi
+}
+
+    
+######################################################################
+# Function:     reset_last_battery_capacity
+# Purpose:      Resets the LAST_BATTERY_CAPACITY variable to the current
+#               battery capacity
+# Paramters:    none
+# Returns:      0 - Success
+#               1 - Error reading battery capacity
+######################################################################
+reset_last_battery_capacity()
+{
+    # If we need to reset the "LAST_BATTERY_CAPACITY", do so now
+    cap=`get_battery_capacity`
+    if [ $? -eq 0 ]; then    
+        export LAST_BATTERY_CAPACITY=$cap
+        echo "Reset LAST_BATTERY_CAPACITY to $LAST_BATTERY_CAPACITY"
+        return 0
+    fi
+    return 1
+}
+
+
+######################################################################
+# Function:     clear_last_battery_capacity
+# Purpose:      Sets the LAST_BATTERY_CAPACITY variable to 0.
+#               This routine used for testing purposes ONLY.
+# Paramters:    none
+# Returns:      none
+######################################################################
+clear_last_battery_capacity()
+{
+    export LAST_BATTERY_CAPACITY=0
+}
+
+
+######################################################################
+# Function:     charger_limit_charge
+# Purpose:      Have the charge circuit charge to a target battery
+#               capacity.  When called, this routine will disable the
+#               charger if we're above the target capacity, and will
+#               enable the charger if we're below the target capacity.
+# Paramters:    check_charger - indicates whether automatic charger
+#                   enable/disable verification should be performed.
+#                   One of:
+#                       ENABLED
+#                       DISABLED
+# Returns:      0 - charger left off
+#               1 - charger left on
+#               2 - Error getting battery capacity
+#               3 - Battery capacity jumped larger than allowed
+#               4 - Charger failed to enable
+#               5 - Charger failed to disable
+######################################################################
+charger_limit_charge()
+{
+    check_charger="$1"
+    cap=`${BATTERY_CAPACITY}`
+    clc_err="$?"
+    if [ $clc_err -eq 0 ]; then
+        cap=`echo $cap | sed s/\%//g`
+
+        # Make sure the battery capacity did not jump more than it should
+        if [ $LAST_BATTERY_CAPACITY -lt $cap ]; then
+            let BATTERY_CAPACITY_DELTA=$cap-$LAST_BATTERY_CAPACITY
+        else
+            let BATTERY_CAPACITY_DELTA=$LAST_BATTERY_CAPACITY-$cap
+        fi
+
+        # If the battery capacity jump was larger than expected, return such
+        if [ $BATTERY_CAPACITY_DELTA -gt $MAX_BATTERY_CAPACITY_DELTA ]; then
+            do_local_echo "Capacity delta too large (${LAST_BATTERY_CAPACITY}% --> ${cap}%)"
+            return 3
+        fi
+
+        # Remember the last battery capacity seen
+        export LAST_BATTERY_CAPACITY=$cap
+
+		# If we're outside our range, adjust now....
+        if [ $cap -le $LOW_CHARGE_LIMIT ]; then
+        	is_charger_on
+        	charger_status="$?"
+			if [ "$charger_status" -eq 0 ]; then
+				# We just reached our goal, adjust the goal back the other way for next round
+            	do_local_echo "Turning charger ON, battery at $cap%"
+            	charger on
+
+            	# If doing charger verification and charger didn't turn on,
+            	#  return an error
+            	if [ "$check_charger" == "ENABLED" ]; then
+                	do_wait_charger on 1
+                	if [ $? -ne 0 ]; then
+                    	return 4
+                	fi
+            	fi
+			else
+            	do_local_echo "Battery at $cap%, min is $LOW_CHARGE_LIMIT, charger already on"
+			fi
+            return 1
+		elif [ $cap -ge $HIGH_CHARGE_LIMIT ]; then
+        	is_charger_on
+        	charger_status="$?"
+			if [ "$charger_status" -ne 0 ]; then
+            	do_local_echo "Turning charger OFF, battery at $cap%"
+            	charger off
+
+            	# If doing charger verification and charger didn't turn off,
+            	#  return an error
+            	if [ "$check_charger" == "ENABLED" ]; then
+                	do_wait_charger off
+                	if [ $? -ne 0 ]; then
+                    	return 5
+                	fi
+            	fi
+			else
+            	do_local_echo "Battery at $cap%, max is $HIGH_CHARGE_LIMIT, charger already off"
+			fi
+            return 0
+        fi
+    else
+        echo "Error $clc_err seen in charger_limit_charge()"
+        return 2
+    fi
+}
+
+
+draw_debug_menu()
+{
+    # Display menu and get choice
+    _CHARGE_DRAW_LIMIT=`charger_draw_limit`
+    _CHARGE_SETTING=`charger_setting_text`
+    _CURRENT=`${BATTERY_CURRENT}`
+    cap=`${BATTERY_CAPACITY}`
+
+    clear_screen
+    _banner="Power Hog Debug"
+    _base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    print_center_text "$_banner" "$_base" 5 4
+    ${DOUT} -n 9 7 "Current Battery Capacity : $cap"
+    ${DOUT} -n 9 11 "Battery Charge Current   : $_CURRENT"
+    ${DOUT} -n 9 13 "Current Draw Limit       : $_CHARGE_DRAW_LIMIT"
+    ${DOUT} -n 9 15 "Charger Mode             : $_CHARGE_SETTING"
+    ${DOUT} -n 9 19 "Q) Movinand Power Hog    : $MOVINAND_POWER_HOG"
+    ${DOUT} -n 9 21 "W) WAN Power Hog         : $WAN_POWER_HOG"
+    ${DOUT} -n 9 23 "E) Wifi Power Hog        : $WIFI_POWER_HOG"
+    ${DOUT} -n 9 25 "R) Video Power Hog       : $VIDEO_POWER_HOG"
+    ${DOUT} -n 9 27 "T) Audio Power Hog       : $AUDIO_POWER_HOG"
+    ${DOUT} -n 7 31 "Select any item to toggle its status."
+    ${DOUT} 7 33 "Press $EXIT_KEY_LABEL to exit power hog debug."
+}
+
+
+######################################################################
+# Function:     debug_power_hog
+# Purpose:      Turn on and off things to watch current draw diffs
+# Parameters:   1 - Charge
+#               2 - Discharge
+# Returns:      0 - Battery within range
+#               1 - Operator canceled
+######################################################################
+debug_power_hog()
+{
+    # Start with them all off
+    charger off
+    power_hog 0
+    export MOVINAND_POWER_HOG="OFF"
+    export WAN_POWER_HOG="OFF"
+    export WIFI_POWER_HOG="OFF"
+    export VIDEO_POWER_HOG="OFF"
+    export AUDIO_POWER_HOG="OFF"
+
+    # Get the key request
+    DONE=0
+    CANCEL=0
+
+    # Start with redrawing information once every 5 seconds
+    _REDRAW_TIMEOUT=10000
+    _REDRAW_MENU=1 
+
+    while [ $DONE -ne 1 ]; do
+        if [ $VIDEO_POWER_HOG == "ON" ] || [ $_REDRAW_MENU -eq 1 ]; then
+            # redraw screen including clear_screen if video power hog is on
+            draw_debug_menu
+            _REDRAW_MENU=0 
+        fi
+
+        # Update every 5 seconds
+        KEY=`$GET_KEYBOARD_INPUT $_REDRAW_TIMEOUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            # Process key request
+            case "$KEY" in
+                $EXIT_KEY)
+                    DONE=1
+                    CANCEL=1
+                    ;;
+                $KEY_Q)
+                    if [ $MOVINAND_POWER_HOG == "OFF" ]; then
+                        # Start up tool to keep movinand busy
+                        $DIAG_TOOL_ROOT/busy_movi.sh &
+                        export MOVINAND_POWER_HOG="ON"
+                    else
+                        # Kill the busy_movi tool
+                        killall busy_movi.sh
+                        export MOVINAND_POWER_HOG="OFF"
+                    fi
+                    _REDRAW_MENU=1
+                    ;;
+                $KEY_W)
+                    if [ $WAN_POWER_HOG == "OFF" ]; then
+                        # Turn on WAN
+                        wan_power $WAN_POWER_ON 1
+                        export WAN_POWER_HOG="ON"
+                    else
+                        # Turn off WAN
+                        wan_power $WAN_POWER_OFF 1
+                        export WAN_POWER_HOG="OFF"
+                    fi
+                    _REDRAW_MENU=1
+                    ;;
+                $KEY_E)
+                    if [ $WIFI_POWER_HOG == "OFF" ]; then
+                        # Turn on WiFi
+                        wifi_power $WIFI_POWER_ON 1
+                        export WIFI_POWER_HOG="ON"
+                    else
+                        # Turn off WiFi
+                        wifi_power $WIFI_POWER_OFF 1
+                        export WIFI_POWER_HOG="OFF"
+                    fi
+                    _REDRAW_MENU=1
+                    ;;
+                $KEY_R)
+                    if [ $VIDEO_POWER_HOG == "OFF" ]; then
+                        # Redraw every second
+                        _REDRAW_TIMEOUT=1000
+                        export VIDEO_POWER_HOG="ON"
+                    else
+                        # Redraw every 10 seconds
+                        _REDRAW_TIMEOUT=10000
+                        export VIDEO_POWER_HOG="OFF"
+                    fi
+                    _REDRAW_MENU=1
+                    ;;
+                $KEY_T)
+                    if [ $AUDIO_POWER_HOG == "OFF" ]; then
+                        # Turn on Audio
+                        audio_start_sound $CHANNEL_SPEAKER_STEREO $RUN_IN_SPEAKER_AUDIO_VOLUME
+                        export AUDIO_POWER_HOG="ON"
+                    else
+                        # Turn off Audio
+                        audio_stop_sound
+                        export AUDIO_POWER_HOG="OFF"
+                    fi
+                    _REDRAW_MENU=1
+                    ;;         
+                *)
+                    ;;
+            esac
+
+        fi
+
+        # If we're not already going to redraw menu, refresh current information
+        if [ $_REDRAW_MENU -eq 0 ]; then
+            # Display menu and get choice
+            _CURRENT=`${BATTERY_CURRENT}`
+            erase_line 11
+            ${DOUT} 9 11 "Battery Charge Current   : $_CURRENT"
+        fi
+    done
+}
+
+
+power_hog()
+{
+    _ON="$1"
+    if [ "$_ON" -eq 0 ]; then
+        # Turn off Audio
+        audio_stop_sound
+
+        # Kill the busy_movi tool
+        killall busy_movi.sh
+
+        # Turn off WAN
+        wan_power $WAN_POWER_OFF 1
+
+        # Turn off WiFi
+        wifi_power $WIFI_POWER_OFF 1
+    else
+        # Turn on WAN
+        wan_power $WAN_POWER_ON 1
+
+        # Turn on Audio
+        audio_start_sound $CHANNEL_SPEAKER_STEREO $RUN_IN_SPEAKER_AUDIO_VOLUME
+
+        # Turn on WiFi
+        wifi_power $WIFI_POWER_ON 1
+
+        # Start up tool to keep movinand busy
+        $DIAG_TOOL_ROOT/busy_movi.sh &
+    fi
+}
+
+
+do_print_battery_status()
+{
+    # Grab time to wait for user input
+    _TIMEOUT="$1"
+
+    # Get battery capacity
+    cap=`${BATTERY_CAPACITY}`
+    cap=`echo $cap | sed s/\%//g`
+    if [ $cap -le $RUN_IN_LOWER_CHARGE_LIMIT ]; then
+        target_limit="$RUN_IN_LOWER_CHARGE_LIMIT"
+    else
+        target_limit="$RUN_IN_UPPER_CHARGE_LIMIT"
+    fi
+
+    _CHARGE_DRAW_LIMIT=`charger_draw_limit`
+    _CHARGE_SETTING=`charger_setting_text`
+    _CURRENT=`${BATTERY_CURRENT}`
+
+    clear_screen
+    _banner="$2"
+    _base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    print_center_text "$_banner" "$_base" 5 4
+    ${DOUT} -n 9 7 "Current Battery Capacity : $cap"
+    ${DOUT} -n 9 9 "Target  Battery Capacity : $target_limit"
+
+    ${DOUT} -n 9 11 "Battery Charge Current   : $_CURRENT"
+    ${DOUT} -n 9 13 "Current Draw Limit       : $_CHARGE_DRAW_LIMIT"
+    ${DOUT} -n 9 15 "Charger Mode             : $_CHARGE_SETTING"
+
+    ${DOUT} 7 19 "Press $EXIT_KEY_LABEL to cancel battery adjustment."
+
+    # Get the key request
+    DONE=0
+    CANCEL=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT ${_TIMEOUT}`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            # Process key request
+            case "$KEY" in
+                $EXIT_KEY)
+                    DONE=1
+                    CANCEL=1
+                    ;;
+                *)
+                    vmsg "Wrong key $Key pressed"
+                    ;;
+            esac
+        else
+            DONE=1
+        fi
+    done
+    return $CANCEL;
+}
+    
+
+
+######################################################################
+# Function:     battery_charge_run_mode
+# Purpose:      Help decrease the time to charge or discharge the battery
+#               This routine will not return until the battery is
+#               within range or the operator cancels.
+# Parameters:   1 - Charge
+#               2 - Discharge
+# Returns:      0 - Battery within range
+#               1 - Operator canceled
+######################################################################
+battery_charge_run_mode()
+{
+    # Turn on or off the power hog based on whether we're dis/charging
+    if [ "$1" -eq 1 ]; then
+        # Need to charge, shut off all power hogs
+        power_hog 0
+    else
+        # Need to discharge, turn on all power hogs
+        power_hog 1
+    fi
+
+    # Now wait until operator cancels or we reach the battery limit
+    _redraw=1
+    is_battery_at_limit 1
+    _level_reached=$?
+    while [ ${_level_reached} -ne 0 ]; do
+        # Adjust charger appropriately
+        # We do this each time through loop to cover case of cable being
+        # removed and reinserted (which would cause charger driver to
+        # automatically turn on charging, which we wouldn't want in a discharge
+        # case.  We could put this only in discharge case, but it doesn't hurt
+        # to continue to make sure the charger is enabled when it's supposed
+        # to be, so I'm leaving this in the "common case" path.
+        charger_limit_charge ENABLED
+        charger_status=$?
+        if [ $charger_status -ne 0 ] && [ $charger_status -ne 1 ]; then
+            case "$charger_status" in
+                2)  failure "Error getting battery capacity"; ;;
+                3)  failure "Battery capacity jumped larger than allowed"; ;;
+                4)  failure "Charger failed to enable"; ;;
+                5)  failure "Charger failed to disable"; ;;
+                *)  ;;
+            esac
+            return 1
+        fi
+
+        if [ ${_level_reached} -eq 2 ]; then
+            # We're discharging, make screen redraw to drain power faster
+            do_print_battery_status ${VIDEO_CANCEL_MESSAGE_DELAY} "Draining Battery to Ship Level"
+            _err=$?
+            if [ $_err -eq 1 ]; then
+                # Shut off all power hogs
+                power_hog 0
+
+                # Operator canceled test
+                return 1
+            fi
+        else
+            # Call once to display message on screen
+            _CHARGE_CHECK_TIMEOUT=120000
+            do_print_battery_status ${_CHARGE_CHECK_TIMEOUT} "Charging Battery to Ship Level"
+            _err=$?
+            if [ $_err -eq 1 ]; then
+                # Shut off all power hogs
+                power_hog 0
+
+                # Operator canceled test
+                return 1
+            fi
+        fi
+        is_battery_at_limit 1
+        _level_reached=$?
+    done
+    # Shut off all power hogs
+    power_hog 0
+    return 0
+}
+
+
+get_green_led_level()
+{
+    _level=`cat $GREEN_LED_LEVEL_ENTRY`
+    return $_level
+}
+
+  
+set_green_led_level()
+{
+    echo -n "$1" > $GREEN_LED_LEVEL_ENTRY
+}
+
+
+######################################################################
+# Function:    adjust_battery_to_ship_mode
+# Purpose:     Adjust the battery to within ship mode range.
+# Parameters:  none
+# Returns:     0 - success
+#              1 - failure
+#              2 - operator cancelled
+######################################################################
+adjust_battery_to_ship_mode()
+{
+  while [ 1 ]; do
+    # Reset our LAST_BATTERY_CAPACITY to be current capacity so
+    # as not to falsly trigger the "Battery capacity jump" mechanism
+    cap=`${BATTERY_CAPACITY}`
+    export LAST_BATTERY_CAPACITY=`echo $cap | sed s/\%//g`
+
+    # If we're going to need to adjust battery, require charger cable
+    is_battery_at_limit 1
+    _level_needs_adjust=$?
+    if [ $_level_needs_adjust -ne 0 ]; then
+        # If the USB cable is not plugged in, ask user to do it
+        is_usb_plugged_in
+        USB_CABLE_PLUGED_IN=$?
+        if [ $USB_CABLE_PLUGED_IN -eq 0 ]; then
+            # Cable is not plugged in, Ask user to plug it in
+            display_usb_plugin_request "Adjust Battery Ship Level" "wall charger"
+        fi
+    fi
+
+    #
+    # Set green LED level to be minimum battery level if charging,
+    #  but need to set it higher than current level if discharging
+    #
+    case "$_level_needs_adjust" in
+        0) _green_level=$ADJUSTER_RANGE_VALID_GREEN_LEVEL; ;;
+        1) _green_level=$ADJUSTER_CHARGE_GREEN_LEVEL; ;;
+        *) _green_level=$ADJUSTER_DISCHARGE_GREEN_LEVEL; ;;
+    esac
+    set_green_led_level $_green_level
+
+    # Adjust battery level, don't exit until level within range or operator cancel
+    while [ $_level_needs_adjust -ne 0 ]; do
+        # Tell user we're busy adjusting battery (done within loop to handle case
+        # of charge cable removed/reinserted on discharge case
+        set_led $YELLOW_LED "ON"
+
+        # Go get the battery capacity to within ship range now.
+        battery_charge_run_mode ${_level_needs_adjust}
+
+        # We're either at ship level or operator canceled.
+        # Check operator cancelled here, limit checked in outer loop
+        if [ $? -eq 1 ]; then
+            failure "Operator canceled Battery Ship Level"
+            return 2
+        fi
+
+        # Check battery again, reloading _level_needs_adjust for next loop
+        is_battery_at_limit 1
+        _level_needs_adjust=$?
+    done
+
+    # Grab some battery values prior to clearing screen
+    _CHARGE_DRAW_LIMIT=`charger_draw_limit`
+    _CHARGE_SETTING=`charger_setting_text`
+    _CURRENT=`${BATTERY_CURRENT}`
+    cap=`${BATTERY_CAPACITY}`
+
+    # If we're here, we're within valid shipping range
+    set_led $YELLOW_LED "OFF"
+    set_green_led_level $ADJUSTER_RANGE_VALID_GREEN_LEVEL
+
+    # Put up screen to inform operator device is ready to go
+    clear_screen
+    _base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    print_center_text "BATTERY LEVEL READY FOR SHIP" "$_base" 5 4
+    ${DOUT} -n 7 7 "The device battery level of $cap"
+    ${DOUT} -n 7 9 "is within acceptable shipping range."
+
+    ${DOUT} -n 7 13 "Battery Charge Current   : $_CURRENT"
+    ${DOUT} -n 7 15 "Current Draw Limit       : $_CHARGE_DRAW_LIMIT"
+    ${DOUT} -n 7 17 "Charger Mode             : $_CHARGE_SETTING"
+
+    ${DOUT} 9 21 "Press $EXIT_KEY_LABEL to return to main menu"
+
+    # Wait for operator to acknowledge
+    # Adjust charger once a minute while waiting
+
+# drain power...
+# power_hog 1
+
+    _READJUST_BATTERY=0
+    while [ $_READJUST_BATTERY -eq 0 ]; do
+        # Make sure green LED is on (charge operation may have turned it off)
+        set_led $YELLOW_LED "OFF"
+        set_green_led_level $ADJUSTER_RANGE_VALID_GREEN_LEVEL
+        set_led $GREEN_LED "ON"
+
+        KEY=`$GET_KEYBOARD_INPUT ${BATTERY_MONITOR_CHARGE_PERIOD}`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            # Process key request
+            case "$KEY" in
+                $EXIT_KEY)
+                    # Return success status
+                    cap=`${BATTERY_CAPACITY}`
+                    success "Battery ship level at $cap"
+                    return 0
+                    ;;
+                *)
+                    vmsg "Wrong key $Key pressed"
+                    ;;
+            esac
+        else
+            # Adjust charger if necessary
+            charger_limit_charge ENABLED
+            charger_status=$?
+            if [ $charger_status -ne 0 ] && [ $charger_status -ne 1 ]; then
+                case "$charger_status" in
+                    2)  do_local_echo "Error getting battery capacity"; ;;
+                    3)  do_local_echo "Battery capacity jump larger than allowed"; ;;
+                    4)  do_local_echo "Charger failed to enable"; ;;
+                    5)  do_local_echo "Charger failed to disable"; ;;
+                    *)  ;;
+                esac
+            fi
+
+            # Make sure we didn't fall out of range
+            is_battery_at_limit 1
+            _level_needs_adjust=$?
+            if [ $_level_needs_adjust -ne 0 ]; then
+                # Battery fell out-of-range (charging from PC, not wall charger)
+                _READJUST_BATTERY=1
+            else
+                # Update capacity portion of screen information in case it changed
+                _CHARGE_DRAW_LIMIT=`charger_draw_limit`
+                _CHARGE_SETTING=`charger_setting_text`
+                _CURRENT=`${BATTERY_CURRENT}`
+                cap=`${BATTERY_CAPACITY}`
+                erase_line 7
+                erase_line 13 
+                erase_line 15
+                erase_line 17
+                ${DOUT} -n 7 7 "The device battery level of $cap"
+                ${DOUT} -n 7 13 "Battery Charge Current   : $_CURRENT"
+                ${DOUT} -n 7 15 "Current Draw Limit       : $_CHARGE_DRAW_LIMIT"
+                ${DOUT} 7 17 "Charger Mode             : $_CHARGE_SETTING"
+            fi
+        fi
+    done
+  done
+}
+
+
+######################################################################
+# Function:    charger_setting
+# Purpose:     Return the current charger setting.
+# Parameters:  none
+# Returns:     echo's setting - string representing charge mode.
+#                   One of:
+#                       0 - Charger Off
+#                       1 - 100 mA
+#                       5 - 500 mA
+#                       9 - Charger is set to *something*
+#
+#               Success/failure result returned from cat of sys entry:
+#                   0 - success
+#                   1 - failure
+# Assumptions: System supports $GG_CHARGER_ICHRG_ENTRY
+# Side Effect: none
+######################################################################
+charger_setting()
+{
+    # If entry not there, charger driver not there and thus charger off
+    if ! [ -f "$GG_CHARGER_ICHRG_ENTRY" ]; then
+        return 0
+    fi
+
+    setting=`cat $GG_CHARGER_ICHRG_ENTRY`
+    RESVAL=$?
+    if [ $RESVAL -ne 0 ]; then
+        # If the call failed, say we don't have charge...
+        return 0        
+    fi
+
+    case "$setting" in
+        0)  return 0; ;;
+        1)  return 1; ;;
+        5)  return 5; ;;
+        *)  return 9; ;;
+    esac
+}
+
+
+######################################################################
+# Function:    charger_setting_text
+# Purpose:     Return a string representing the current charger setting.
+# Paramters:   none
+# Returns:     echo's setting - string representing charge mode.
+#                   One of:
+#                       "Off"
+#                       "100 mA"
+#                       "500 mA"
+#                       "On"
+#               Success/failure result returned from cat of sys entry:
+#                   0 - success
+#                   1 - failure
+# Side Effect: none
+######################################################################
+charger_setting_text()
+{
+    charger_setting
+    setting=$?
+    case "$setting" in
+        0)  echo "Off"; ;;
+        1)  echo "100 mA"; ;;
+        5)  echo "500 mA"; ;;
+        *)  echo "On"; ;;
+    esac
+    return 0
+}
+
+
+
+######################################################################
+# Function:     is_charger_on
+# Purpose:      Determine if device is charging or not.
+# Paramters:    none
+# Returns:      0 - Device not charging
+#               1 - Device charging at 100 mA
+#               2 - Device charging at > 100 mA
+######################################################################
+is_charger_on()
+{
+    charger_setting
+    status=$?
+    if [ $status -eq 0 ]; then
+        return 0
+    elif [ $status -eq 1 ]; then
+        return 1
+    else
+        return 2
+    fi
+}
+
+
+######################################################################
+# Function:     gg_get_pmic_voltage
+# Purpose:      Read the voltage from the PMIC and return the value
+#               in mVolts.
+# Paramters:    none
+# Returns:      mVolts - voltage read from PMIC in mVolts
+######################################################################
+gg_get_pmic_voltage()
+{
+    # If entry not there, charger driver not there and thus charger off
+    if ! [ -f "$GG_CHARGER_VOLTAGE_ENTRY" ]; then
+        ATLAS_VOLTAGE=0
+        return 0
+    fi
+    ATLAS_VOLTAGE=`cat $GG_CHARGER_VOLTAGE_ENTRY`
+    return $ATLAS_VOLTAGE
+}
+
+
+######################################################################
+# Function:     gg_do_get_battery_cycle_info
+# Purpose:      Read the battery cycle count information from gas gauge
+# Paramters:    none
+# Returns:      Echo's hex value for battery cycle count
+######################################################################
+gg_do_get_battery_cycle_info()
+{
+    gasgauge-info -d 2>/dev/null | grep CYCT_$1 | cut -b 10-
+}
+
+
+######################################################################
+# Function:    gg_get_battery_cycle_info
+# Purpose:     Gather up the battery cycle information
+# Paramters:   none
+# Returns:     Echo's decimal value for battery cycle count
+######################################################################
+gg_get_battery_cycle_info()
+{
+    BATTERY_CYCLE_COUNT=0x`gg_do_get_battery_cycle_info H``gg_do_get_battery_cycle_info L`    
+    echo $(($BATTERY_CYCLE_COUNT))
+}
+
+
+munge_byte()
+{
+    _HIGH_NIBBLE=`printf "%x" $1`
+    _LOW_NIBBLE=`printf "%x" $2`
+    echo "0x${_HIGH_NIBBLE}${_LOW_NIBBLE}"
+}
+
+
+######################################################################
+# Function:    gg_get_battery_cycle_learning_info
+# Purpose:     Gather up the battery cycle information
+# Paramters:   none
+# Returns:     Echo's decimal value for battery cycle count
+######################################################################
+gg_get_battery_cycle_learning_info()
+{
+    eval `gasgauge-info 0x28`   # CYCL_L
+    eval `gasgauge-info 0x29`   # CYCL_H
+    BATTERY_CYCLE_COUNT=`munge_byte ${CYCL_H} ${CYCL_L}`
+    echo $(($BATTERY_CYCLE_COUNT))
+}
+
+
+######################################################################
+# Function:     gg_get_battery_lmd
+# Purpose:      Read battery last measured discharge information
+# Parameters:   none
+# Returns:      Echo's decimal value for last measured discharge value
+#               in mAH.
+######################################################################
+gg_get_battery_lmd()
+{
+    LAST_MEASURED_DISCHARGE=`cat $BATTERY_LMD_ENTRY`
+    echo $LAST_MEASURED_DISCHARGE
+}
+
+
+######################################################################
+# Function:    gg_get_battery_temperature
+# Purpose:     Read battery temperature from gas gauge
+# Paramters:   none
+# Returns:     Echo's decimal value for battery temperature
+######################################################################
+gg_get_battery_temperature()
+{
+    eval `gasgauge-info 0x6`   # TEMP_L
+    eval `gasgauge-info 0x7`   # TEMP_H
+    BATTERY_TEMPERATURE=`munge_byte ${TEMP_H} ${TEMP_L}`
+    echo $(($BATTERY_TEMPERATURE))
+}
+
+
+######################################################################
+# Function:    gg_get_battery_flags
+# Purpose:     Read battery FLAGS register from gas gauge
+# Paramters:   none
+# Returns:     Echo's hex value for battery FLAGS register 
+######################################################################
+gg_get_battery_flags()
+{
+    eval `gasgauge-info 0xa`   # FLAGS
+    # echo $(($FLAGS))
+    echo $FLAGS
+}
+
+
+######################################################################
+# Function      gg_get_battery_id
+# Purpose:      Echo the battery part number 
+# Parameters:   none
+# Returns:      echo's the battery part number
+######################################################################
+gg_get_battery_id()
+{
+    if [ -f $GG_BATTERY_ID_ENTRY ]; then
+        cat $GG_BATTERY_ID_ENTRY
+    else
+        echo "Not Available"
+    fi
+}
+
+
+######################################################################
+# Function      gg_confirm_battery_id
+# Purpose:      Read battery part number and confirm it matches what
+#               we expect for this product
+# Parameters:   none
+# Returns:      0 - pass - Battery part number confirmed CORRECT
+#               1 - fail - Battery part number was not correct
+######################################################################
+gg_confirm_battery_id()
+{
+    # If entry doesn't exist, return pass
+    if ! [ -f $GG_BATTERY_ID_ENTRY ]; then
+        do_local_echo "WARNING: $GG_BATTERY_ID_ENTRY not found"
+        return 0
+    fi
+
+    # Get the id of the battery and search the acceptable id list to see
+    # if this battery is acceptable
+	_battery_id=`gg_get_battery_id`
+    if [ -n "${_battery_id}" ]; then
+        for next_valid_id in $BATTERY_PART_NUMBER_LIST; do
+            if [ "${_battery_id}" = "$next_valid_id" ]; then
+                return 0
+            fi
+        done
+        do_local_echo "ERROR: Invalid battery part number ${_battery_id} found"
+    else 
+        do_local_echo "ERROR: getting battery part number"
+    fi
+
+    # If we're here, we don't recognize this battery as valid or acceptable
+    return 1
+}
+
+
+######################################################################
+# Function:    gas_gauge_hal_init
+# Purpose:     Initialization code for the gas gauge hal layer
+# Paramters:   none
+# Returns:     none
+######################################################################
+gas_gauge_hal_init()
+{
+    #
+    # Nothing to initialize for gas gauge
+    #
+    vmsg "gas_gauge_hal_init()"
+}
+
+
+######################################################################
+# Function:    gas_gauge_hal_exit
+# Purpose:     Cleanup / exit code for the gas gauge hal layer
+# Paramters:   none
+# Returns:     none
+######################################################################
+gas_gauge_hal_exit()
+{
+    #
+    # Nothing to uninitialize for gas gauge
+    #
+    vmsg "gas_gauge_hal_exit()"
+}
+
+get_current_draw_mA()
+{
+    # use the battery_current_diags to get higher resolution than battery_current
+    # sys entry
+    let BATTERY_CURRENT_RAW=`cat  $BATTERY_DRIVER_ENTRY_DIR/battery_current_diags`
+    let ma=$BATTERY_CURRENT_RAW/2
+    let mAp=$ma/1000 
+    let uAp=$ma%1000
+    if [ $uAp -lt 0 ]; then
+        let uAp*=-1
+    fi
+
+    echo $mAp.$uAp
+}
+
+# Don't include HAL more than once
+if [ "x$_GAS_GAUGE_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+# For audio_stop_sound() and audio_start_sound()
+[ -f ${_AUDIO_HAL_FUNCTIONS} ] && . ${_AUDIO_HAL_FUNCTIONS}
+
+# For is_usb_plugged_in() and display_usb_plugin_request()
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+# For set_led
+[ -f ${_LED_HAL_FUNCTIONS} ] && . ${_LED_HAL_FUNCTIONS}
+
+
+#
+# Macros for retrieving battery information
+#
+export BATTERY_DRIVER_ENTRY_DIR="/sys/devices/system/luigi_battery/luigi_battery0"
+export BATTERY_CAPACITY="cat $BATTERY_DRIVER_ENTRY_DIR/battery_capacity"
+export BATTERY_VOLTAGE="cat $BATTERY_DRIVER_ENTRY_DIR/battery_voltage"
+
+export BATTERY_CURRENT=get_current_draw_mA
+
+# export BATTERY_CURRENT="cat $BATTERY_DRIVER_ENTRY_DIR/battery_current"
+export BATTERY_TEMPERATURE="cat $BATTERY_DRIVER_ENTRY_DIR/battery_temperature"
+export TPH_BATTERY_CURRENT="gasgauge-info -l"
+
+#
+# Charger driver
+#
+export GG_CHARGER_DIR="/sys/devices/platform/fsl-usb2-udc"
+export GG_CURRENT_LIMIT_ENTRY="$GG_CHARGER_DIR/current_limit"
+export GG_CHARGER_ICHRG_ENTRY="$GG_CHARGER_DIR/ichrg_setting"
+export GG_CHARGER_VOLTAGE_ENTRY="$GG_CHARGER_DIR/voltage"
+export GG_BATTERY_ID_ENTRY="$GG_CHARGER_DIR/battery_id"
+
+
+# Doesn't exist in 2.6.24
+export GG_CHARGER_STATE_ENTRY="$GG_CHARGER_DIR/charger_state"
+
+#
+# Maximum delta between gas gauge voltage and Atlas voltage
+#
+export MAX_VOLTAGE_DELTA=200
+
+
+#
+# Maximum delta for a battery capacity change (in percentage) during run-in.
+#
+# This should be the maximum amount that the battery should ever
+# report as a capacity delta for a time period of no greater than 5
+# minutes (the time it takes to run any individual run-in sub-test).
+# To date, the longest running sub-test is the moviNand test, which
+# takes less than 3 minutes.
+#
+#
+export MAX_BATTERY_CAPACITY_DELTA=10
+
+
+#
+# Amount of time between checking battery level while monitoring battery
+# at the end of the "Battery Ship Level" adjust diagnostic
+#
+export BATTERY_MONITOR_CHARGE_PERIOD=180000
+
+export _GAS_GAUGE_HAL_INCLUDED=1

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Java's Runtime.exec() does not have a shell, so arguments that contain wildcards are not expanded. Thus this script is written to invoke the cp command in a shell.
+
+cp $1 $2

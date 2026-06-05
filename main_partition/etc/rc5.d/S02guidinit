@@ -1,0 +1,10 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+if [ "x$1" = "xstart" -a \! -f /etc/guid ]; then
+    mntroot_rw
+    dd if=/dev/urandom bs=1 count=32 | md5sum | awk '{print $1}' > /etc/guid
+    mntroot_ro
+fi

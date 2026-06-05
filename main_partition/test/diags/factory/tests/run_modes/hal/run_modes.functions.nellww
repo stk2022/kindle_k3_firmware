@@ -1,0 +1,118 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   run_modes.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   05/22/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Mario platform Run Modes HAL layer for run modes diagnostic scripts.  This file
+#   defines various HAL routines to put the device into various run modes.
+#
+#   This file contains a HAL for the Mario platform, which includes:
+#
+#   Constants
+#       EINK_WAN_PAGE_FLIP_DELAY    - Seconds to delay between page flips
+#                                       for wan/eink run mode
+#       EINK_USB_PAGE_FLIP_DELAY    - Seconds to delay between page flips
+#                                       for wan/usb export run mode
+#
+#   Routines
+#       run_modes_hal_init()            - Hal initialization
+#       run_modes_hal_exit()            - Hal teardown
+#
+######################################################################
+
+
+######################################################################
+# Function:     run_modes_hal_init
+# Purpose:      Hal initialization routine for run mode.  It currently
+#               calls the hal init routines for audio, usb, wan, and
+#               video.
+# Paramters:    none
+# Returns:      none
+######################################################################
+run_modes_hal_init()
+{
+    #
+    # Initialize utility hals
+    #
+    vmsg "run_modes_hal_init()"
+    if [ -n "$HAS_AUDIO" ] && [ $HAS_AUDIO -eq 1 ]; then
+        audio_hal_init
+    fi
+    if [ -n "$HAS_USB_DEVICE" ] && [ $HAS_USB_DEVICE -eq 1 ]; then
+        usb_hal_init
+    fi
+    if [ -n "$HAS_VIDEO" ] && [ $HAS_VIDEO -eq 1 ]; then
+        video_hal_init
+    fi
+    if [ -n "$HAS_WAN" ] && [ $HAS_WAN -eq 1 ]; then
+        wan_hal_init
+    fi
+}
+
+
+######################################################################
+# Function:     run_modes_hal_exit
+# Purpose:      Hal exit routine for run mode.  It currently
+#               calls the hal exit routines for audio, usb, wan, and
+#               video.
+# Paramters:    none
+# Returns:      none
+######################################################################
+run_modes_hal_exit()
+{
+    #
+    # Clean up utility hals
+    #
+    vmsg "run_modes_hal_exit()"
+    if [ -n "$HAS_AUDIO" ] && [ $HAS_AUDIO -eq 1 ]; then
+        audio_hal_exit
+    fi
+    if [ -n "$HAS_WAN" ] && [ $HAS_WAN -eq 1 ]; then
+        wan_hal_exit
+    fi
+    if [ -n "$HAS_VIDEO" ] && [ $HAS_VIDEO -eq 1 ]; then
+        video_hal_exit
+    fi
+    if [ -n "$HAS_USB_DEVICE" ] && [ $HAS_USB_DEVICE -eq 1 ]; then
+        usb_hal_exit
+    fi
+}
+
+
+# Don't include HAL more than once
+if [ "x$_RUN_MODES_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+# USB Hal Function...
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+# Video Hal Functions...
+[ -f ${_VIDEO_HAL_FUNCTIONS} ] && . ${_VIDEO_HAL_FUNCTIONS}
+
+# WAN Hal Functions...
+[ -f ${_WAN_HAL_FUNCTIONS} ] && . ${_WAN_HAL_FUNCTIONS}
+
+#
+# mSecond Delay between page turns for EINK w/ WAN cert test
+#
+export EINK_WAN_PAGE_FLIP_DELAY=5
+export EINK_USB_PAGE_FLIP_DELAY=3
+export EINK_PAGE_FLIP_DELAY=3
+
+export RUN_MODE_PAGE_FLIP_SAM_MENU_ITEM=500
+export RUN_MODE_PAGE_FLIP__20_MENU_ITEM=501
+export RUN_MODE_PAGE_FLIP__40_MENU_ITEM=502
+export RUN_MODE_PAGE_FLIP__60_MENU_ITEM=503
+export RUN_MODE_PAGE_FLIP__80_MENU_ITEM=504
+export RUN_MODE_PAGE_FLIP_100_MENU_ITEM=505
+                                                                 
+
+export _RUN_MODES_HAL_INCLUDED=1

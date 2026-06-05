@@ -1,0 +1,318 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_OFFSET_ATK=${MOVINAND_OFFSET_PARTITION}
+_OFFSET_HEADER=${MOVINAND_OFFSET_HEADER}
+_OFFSET_U_BOOT=${MOVINAND_OFFSET_U_BOOT}
+_OFFSET_KERNEL=${MOVINAND_OFFSET_KERNEL}
+_OFFSET_ISISWF=${MOVINAND_OFFSET_ISISWF}
+_OFFSET_ROOTFS=${MOVINAND_OFFSET_ROOTFS}
+
+_FLASH_DEVICE=${MOVINAND_DEVICE}
+_FLASH_WHICH=
+
+#_FLASH_DEVICE=/mnt/mmc/fakedev
+#rm -rf ${_FLASH_DEVICE}
+#touch ${_FLASH_DEVICE}
+
+_ACTION=
+_PATH=
+_FILE=
+
+_SYSREBOOT=/sbin/sysreboot
+_BUSYBOX=/bin/busybox
+
+_UPDATE_SYSREBOOT=/tmp/sysreboot
+_UPDATE_BUSYBOX=/tmp/busybox
+
+_UPDATE_REBOOT="${_UPDATE_SYSREBOOT} --reboot"
+_UPDATE_ZCAT="${_UPDATE_BUSYBOX} zcat"
+_UPDATE_SYNC="${_UPDATE_BUSYBOX} sync"
+_UPDATE_DD="${_UPDATE_BUSYBOX} dd"
+_UPDATE_RM="${_UPDATE_BUSYBOX} rm"
+
+update_rootfs()
+{
+    if [ ! -e "${_UPDATE_SYSREBOOT}" ]; then
+        cp ${_SYSREBOOT} ${_UPDATE_SYSREBOOT}
+        cp ${_BUSYBOX} ${_UPDATE_BUSYBOX}
+    fi
+}
+
+flash_which()
+{
+    if [ -f "${_PATH}" ]; then
+    
+        echo "flashing ${_PATH} to ${_ACTION}..."
+        update_rootfs
+        
+        # Careful!  It just so happens that 1024 is an even multiple of all the
+        # current offsets.  If/when any of these change, the blocksize needed
+        # to get to them may change, too.
+        #
+        _BS=1024
+        _FLASH_WHICH=$(( ${_FLASH_WHICH}/${_BS} ))
+        
+        ${_UPDATE_DD} if=${_PATH} of=${_FLASH_DEVICE} bs=${_BS} seek=${_FLASH_WHICH}
+        _RES=$?
+        ${_UPDATE_SYNC}
+        
+        if [ ${_RES} -eq 0 ]; then
+            echo "flash completed successfully"
+            ${_UPDATE_RM} -rf ${_PATH}
+            ${_UPDATE_SYNC}
+            
+            case ${_ACTION} in
+                rootfs | rootfs_compressed)
+                echo "rebooting"
+                ${_UPDATE_REBOOT}
+                ;;
+            esac
+        else
+            echo "flash failed: ${_RES}"
+            _RES=2
+        fi
+
+    else
+    
+        echo "cannot open file ${_PATH}"
+        _RES=1
+    
+    fi
+
+}
+
+zcat_flash()
+{
+    if [ -f "${_PATH}" ]; then
+    
+        echo "flashing ${_PATH} to ${_ACTION}..."
+        update_rootfs
+        
+        # Careful!  It just so happens that 4096 is an even multiple of the rootfs offset.
+        # If/when it changes, then the blocksize needed to get to it may change, too.
+        #
+        _BS=4096
+        _FLASH_WHICH=$(( ${_FLASH_WHICH}/${_BS} ))
+        
+        ${_UPDATE_ZCAT} ${_PATH} | ${_UPDATE_DD} of=${_FLASH_DEVICE} bs=${_BS} seek=${_FLASH_WHICH}
+        _RES=$?
+        ${_UPDATE_SYNC}
+        
+        if [ ${_RES} -eq 0 ]; then
+            echo "flash completed successfully"
+            ${_UPDATE_RM} -rf ${_PATH}
+            ${_UPDATE_SYNC}
+            
+            echo "rebooting"
+            ${_UPDATE_REBOOT}
+        else
+            echo "flash failed: ${_RES}"
+            _RES=2
+        fi
+        
+    else
+    
+        echo "cannot open file ${_PATH}"
+        _RES=1
+    
+    fi
+}
+
+flash_all()
+{
+    if [ -d "${_PATH}" ]; then
+    
+        cd ${_PATH}
+        
+        # First, update any bootloader and/or kernel areas.
+        #
+        if [ -f atk-*.bin ]; then
+            _PATH=`ls atk-*.bin`
+            _PATH=`basename ${_PATH}`
+            file_to_action
+        
+        else
+        
+            # Look for each of the components that would be in everything.bin in turn, flashing
+            # only the ones that are there.
+            #
+            if [ -f dcdheader.bin ]; then
+                _PATH=dcdheader.bin
+                file_to_action
+            fi
+            
+            if [ -f u-boot.bin ]; then
+                _PATH=u-boot.bin
+                file_to_action
+            fi
+            
+            if [ -f uImage ]; then
+                _PATH=uImage
+                file_to_action
+            fi
+
+        fi
+        
+        # Then, update the rootfs (look for the compressed image before looking for the
+        # uncompressed one).
+        #
+        if [ -f rootfs.img.gz ]; then
+            _PATH=rootfs.img.gz
+            file_to_action
+        fi
+
+        if [ -f rootfs.img ]; then
+            _PATH=rootfs.img
+            file_to_action
+        fi
+            
+    else
+    
+        echo "${_PATH} doesn't exist"
+        _RES=1
+    
+    fi
+}
+
+action()
+{
+    # Set up to flash whichever location was designated.
+    #
+    case ${_ACTION} in
+    
+        atk)
+            _FLASH_WHICH=${_OFFSET_ATK}
+            flash_which
+        ;;
+        
+        dcdheader)
+            _FLASH_WHICH=${_OFFSET_HEADER}
+            flash_which
+        ;;
+        
+        bootloader)
+            _FLASH_WHICH=${_OFFSET_U_BOOT}
+            flash_which
+         ;;
+        
+        kernel)
+            _FLASH_WHICH=${_OFFSET_KERNEL}
+            flash_which
+        ;;
+        
+        rootfs)
+            _FLASH_WHICH=${_OFFSET_ROOTFS}
+            flash_which
+        ;;
+        
+        rootfs_compressed)
+            _FLASH_WHICH=${_OFFSET_ROOTFS}
+            zcat_flash
+        ;;
+        
+        all)
+            flash_all
+        ;;
+        
+        waveform)
+            _FLASH_WHICH=${_OFFSET_ISISWF}
+            flash_which
+        ;;
+        
+        # Huh?
+        #
+        *)
+            echo "usage: $0 [dcdheader|bootloader|kernel|rootfs|rootfs_compressed|all|waveform] /path/to/file(s)"
+            _RES=1
+        ;;
+
+    esac
+}
+
+file_to_action()
+{
+    _FILE=`basename ${_PATH}`
+    _ACTION=
+    
+    # Translate standard buildresult filenames to action.
+    #
+    case ${_FILE} in
+    
+        atk-*.bin)
+            _ACTION=atk
+        ;;
+        
+        dcdheader.bin)
+            _ACTION=dcdheader
+        ;;
+        
+        u-boot.bin)
+            _ACTION=bootloader
+        ;;
+        
+        uImage)
+            _ACTION=kernel
+        ;;
+        
+        rootfs.img)
+            _ACTION=rootfs
+        ;;
+        
+        rootfs.img.gz)
+            _ACTION=rootfs_compressed
+        ;;
+        
+        *.wbf)
+            _ACTION=waveform
+        ;;
+        
+        # Huh?
+        #
+        *)
+            echo "usage: $0 /path/to/[atk-*.bin|dcdheader.bin||u-boot.bin|uImage|rootfs.img|rootfs.img.gz|<waveform_file>.wbf]"
+            _RES=1
+        ;;
+    
+    esac
+   
+    if [ -n "${_ACTION}" ]; then
+        action
+    fi
+}
+
+# Stop the framework and other things that could get in our way.
+#
+wait_framework_done
+${ETHERNET} stop
+stop_all
+
+case $# in
+
+    # Translate standard buildresult file to flashing action.
+    #
+    1)
+        _PATH=$1
+        file_to_action
+    ;;
+    
+    # Do requested flashing action with file(s).
+    #
+    2)
+        _ACTION=$1
+        _PATH=$2
+        action
+    ;;
+
+    # Huh?
+    #
+    *)
+        echo "usage: $0 [file-to-flash] | [<flash-which> /path/to/file] | [all /path/to/file(s)]"
+        _RES=1
+    ;;
+
+esac
+
+exit ${_RES}

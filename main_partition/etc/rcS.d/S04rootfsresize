@@ -1,0 +1,117 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_ROOTMNT=/etc/sysconfig/root
+[ -f ${_ROOTMNT} ] && . ${_ROOTMNT}
+
+_BLKROOT_DEV=${BLKROOT_DEV}
+_ROOTFS_DEV=${MNTROOT_DEV}
+
+
+resize_rootfs() {
+	ROOTFS=`tune2fs -l ${_ROOTFS_DEV} | grep "Block count: " | sed 's/Block count:\s*//g' | sed 's/\([0-9]*\).*/\1/'`
+
+	let PARTITION=$RPARTITION/1024*1024
+
+	if [ $ROOTFS -lt $(($PARTITION-1024)) ]; then
+		# If ubootchartd_bin is still alive, it will prevent us from
+		# remounting some system directories.
+		while killall -q -SIGTERM ubootchartd_bin; do
+			sleep 2
+		done
+
+		msg "Attempting to resize rootfs on $_ROOTFS_DEV to $PARTITION blocks" I
+		msg "Current rootfs is $ROOTFS-block long." I
+		msg "Preparing temporary rootfs" I
+		umount -a -v
+		mntroot_rw
+		mkdir -p /tmproot
+		mount tmproot /tmproot -t tmpfs 
+		
+		CREATE_DIRS='proc sys usr/bin var mnt oldroot dev/pts' 
+		for CREATE_DIR in ${CREATE_DIRS}; do
+			mkdir -p /tmproot/$CREATE_DIR
+		done
+
+		COPY_DIRS='bin etc lib sbin mnt'
+		for COPY_DIR in ${COPY_DIRS}; do
+			cp -a /$COPY_DIR /tmproot/
+		done
+		
+		COPY_VAR_DIRS='lib lock run'
+		for COPY_VAR_DIR in ${COPY_VAR_DIRS}; do
+			cp -a /var/$COPY_VAR_DIR /tmproot/var/
+		done
+
+		# Cherry picking missing bits	
+		cp -a /usr/bin/logger /tmproot/usr/bin/.
+		cp -a /usr/bin/basename /tmproot/usr/bin/.
+		cp -a /usr/bin/cut /tmproot/usr/bin/.
+		cp -a /usr/sbin /tmproot/usr/
+
+
+		msg "Pivoting to temporary rootfs" I
+		mount --move /dev /tmproot/dev
+
+		# shuffle around proc so that currently running applications use the one on /tmproot
+		mount --move /proc /tmproot/proc
+		mount oldproc /proc -t proc
+		
+		cd /tmproot/
+
+		pivot_root . oldroot
+
+		mount tmpsysfs /sys -t sysfs
+
+		msg "Resizing" I
+		# nobody can be using this because no new persistant processes were started
+		umount /oldroot/proc
+
+		mount -o remount,ro /oldroot
+		umount -l /oldroot
+		resize2fs -p -F -f ${_ROOTFS_DEV} $PARTITION
+		sync
+
+		msg "Updating journaling data" I
+		e2fsck -C 0 -y -f -F ${_ROOTFS_DEV}
+		sync
+		mount -o ro,noatime,nodiratime ${_ROOTFS_DEV} /oldroot
+		mount -o remount,rw /oldroot
+		umount -l /oldroot
+		e2fsck -C 0 -y -f -F ${_ROOTFS_DEV}
+		sync
+
+		msg "Rebooting" I
+		clean_reboot
+	else
+		msg "No rootfs on $_ROOTFS_DEV resizing needed" I
+		if [ -d /tmproot ]; then 
+			mntroot_rw
+			rm -rf /tmproot
+			mntroot_ro
+		fi
+		exit 1
+	fi
+}
+
+
+RPARTITION=`sfdisk -s ${_ROOTFS_DEV}`
+_RET=$?
+if [ $_RET -eq 0 ]; then
+    resize_rootfs
+else 
+    _ROOTFS_DEV=/dev/mmcblk1p1
+    RPARTITION=`sfdisk -s ${_ROOTFS_DEV}`
+    _RET=$?
+    if [ $_RET -eq 0 ]; then
+        resize_rootfs
+    else
+    	msg "Cannot find ${_ROOTFS_DEV}, aborting resizing" E
+    	exit 5
+    fi
+fi
+
+exit 0
+

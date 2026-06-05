@@ -1,0 +1,15 @@
+#!/bin/sh
+if [ -n "$1" ]; then
+	K="$1"
+else
+	K=/mnt/base-us/uImage
+fi
+
+if [ \! -r "$K" ]; then
+	echo "Cannot access $K"
+	return 1
+fi
+
+/test/flashtools/mario/update-kernel "$K"
+/test/flashtools/mario/update-kernel2 "$K"
+rm "$K"

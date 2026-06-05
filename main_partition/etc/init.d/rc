@@ -1,0 +1,158 @@
+#!/bin/sh
+#
+# rc		This file is responsible for starting/stopping
+#		services when the runlevel changes.
+#
+#		Optimization feature:
+#		A startup script is _not_ run when the service was
+#		running in the previous runlevel and it wasn't stopped
+#		in the runlevel transition (most Debian services don't
+#		have K?? links in rc{1,2,3,4,5} )
+#
+# Author:	Miquel van Smoorenburg <miquels@cistron.nl>
+#		Bruce Perens <Bruce@Pixar.com>
+#
+# Version:	@(#)rc  2.78  07-Nov-1999  miquels@cistron.nl
+#
+
+. /etc/default/rcS
+export VERBOSE
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+PRE_NUM=-1
+
+#
+# Start/stop script or program.
+#
+startup() {
+
+  if [ "$2" = "start" ]; then
+    update_boot_progress "`basename $1`"
+  fi
+
+  case "$1" in
+	*.sh)
+		sh "$@"
+		;;
+	*)
+		"$@"
+		;;
+  esac
+}
+
+PLATFORM_STARTUP_BEGIN() {
+	case "$1" in
+		0|6)
+			platform_shutdown_begin
+		;;
+		
+		*)
+			platform_startup_begin
+		;;
+	esac
+}
+
+PLATFORM_STARTUP_END() {
+	case "$1" in
+		0|6)
+			platform_shutdown_end
+		;;
+
+		# call "mntroot ro" at the end of normal boot.
+		5)
+			platform_startup_end 1
+		;;
+
+		*)
+			platform_startup_end
+		;;
+	esac
+}
+
+  # Ignore CTRL-C only in this shell, so we can interrupt subprocesses.
+  trap ":" INT QUIT TSTP
+
+  # Set onlcr to avoid staircase effect.
+  stty onlcr 0>&1
+
+  # Now find out what the current and what the previous runlevel are.
+
+  runlevel=$RUNLEVEL
+  # Get first argument. Set new runlevel to this argument.
+  [ "$1" != "" ] && runlevel=$1
+  if [ "$runlevel" = "" ]; then
+	echo "Usage: $0 <runlevel>" >&2
+	exit 1
+  fi
+  previous=$PREVLEVEL
+  [ "$previous" = "" ] && previous=N
+
+  export runlevel previous
+
+  # Is there an rc directory for this new runlevel?
+  if [ -d /etc/rc$runlevel.d ]; then
+	# First, run the KILL scripts.
+	if [ $previous != N ]; then
+		platform_shutdown_begin
+		for i in /etc/rc$runlevel.d/K[0-9][0-9]*
+		do
+			# Check if the script is there.
+			[ ! -f $i ] && continue
+
+			# Stop the service.
+			startup $i stop
+		done
+		platform_shutdown_end
+	fi
+	boot_milestone "rc${runlevel}a"
+	PLATFORM_STARTUP_BEGIN "$runlevel"
+	# Now run the START scripts for this runlevel.
+	for i in /etc/rc$runlevel.d/S*
+	do
+		[ ! -f $i ] && continue
+
+		if [ $previous != N ] && [ $previous != S ]; then
+			#
+			# Find start script in previous runlevel and
+			# stop script in this runlevel.
+			#
+			suffix=${i#/etc/rc$runlevel.d/S[0-9][0-9]}
+			stop=/etc/rc$runlevel.d/K[0-9][0-9]$suffix
+			previous_start=/etc/rc$previous.d/S[0-9][0-9]$suffix
+			#
+			# If there is a start script in the previous level
+			# and _no_ stop script in this level, we don't
+			# have to re-start the service.
+			#
+			[ -f $previous_start ] && [ ! -f $stop ] && continue
+		fi
+		case "$runlevel" in
+			0|6)
+				startup $i stop
+				;;
+			4)
+				# Level 4 is diagnostics run mode.  Don't execute scripts in parallel,
+				# as it will start up the main diagnostic script in background instead
+				# of foreground, which caused diagnostics to lose serial port ownership.
+				startup $i start
+				;;
+			*)
+				CURR_NUM=$(echo $i | sed 's/S\([0-9][0-9]\).*/\1/ ')
+				if [ $PRE_NUM != $CURR_NUM ]; then
+					PRE_NUM=$CURR_NUM
+					# need to wait until previous one finishes 
+					# if number differs"
+					wait
+				fi
+				# default is to run with &
+				startup $i start &
+				;;
+		esac
+	done
+	wait
+	PLATFORM_STARTUP_END "$runlevel"
+	boot_milestone "rc${runlevel}z"
+  fi
+# eof /etc/init.d/rc

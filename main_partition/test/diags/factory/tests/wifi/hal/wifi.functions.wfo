@@ -1,0 +1,1722 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   wifi.functions.shasta
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   06/02/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Shasta platform WIFI HAL layer for wifi diagnostic scripts.  This file
+#   defines various HAL routines for wifi power management as well
+#   as module information gathering routines.
+#
+#   Important Variables
+#       WIFI_MAC_ADDRESS            - Holds MAC address
+#
+#   Important Constants
+#       WIFI_POWER_OFF              - WIFI power off
+#       WIFI_POWER_ON               - WIFI power on
+#       WIFI_POWER_OFF_TIMEOUT      - Max time to wait for WIFI power off
+#       WIFI_POWER_ON_TIMEOUT       - Max time to wait for WIFI power on 
+#       WIFI_INFO_READY_TIMEOUT     - Max wait time for WIFI info
+#
+#   Routines
+#       wifi_verify_chip_alive(void)- Verify the wifi responds as expected
+#       wifi_hal_init(void)         - Hal initialization routine
+#       wifi_hal_exit(void)         - Hal teardown routine
+#
+######################################################################
+
+
+#___________________________________________________________________
+#
+#   WIFI Power Related Test Support Routines Start Here...
+#
+#___________________________________________________________________
+
+ 
+######################################################################
+# Function:     wifi_power_inform_user
+# Purpose:      Put up a screen informing the user of the WIFI power
+#               operation under way
+# Parameters:   mode - power mode to put WIFI in; one of:
+#                   WIFI_POWER_OFF,
+#                   WIFI_POWER_ON,
+#               footer - print the full banner/footer; one of:
+#                   0 - Don't print the footer
+#                   1 - Print the entire screen
+# Returns:      none
+######################################################################
+wifi_power_inform_user()
+{
+    MODE="$1"
+    PRINT_FOOTER=1
+    clear_screen
+    case "$MODE" in
+        $WIFI_POWER_OFF)
+            ${DOUT} -n 12 4 "Powering the WIFI off ..."
+            ;;
+        $WIFI_POWER_ON)
+            ${DOUT} -n 12 4 "Powering the WIFI on ..."
+            ;;
+        *)
+            ${DOUT} 8 4 "ERROR: UNKNOWN WIFI POWER MODE $MODE"
+            PRINT_FOOTER=0
+            ;;
+    esac
+
+    if [ $PRINT_FOOTER -eq 1 ]; then
+        ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 8 7 "This could take up to 2 minutes."
+        ${DOUT} -n 8 9 "This screen will auto-dismiss once"
+        ${DOUT} 8 11 "the WIFI power operation is complete."
+    fi
+}
+
+
+
+######################################################################
+# Function:     wifi_info_power
+# Purpose:      Power the WIFI module into one of its three power modes
+# Parameters:   mode - power mode to put WIFI module into.
+#                   Either WIFI_POWER_OFF or WIFI_POWER_ON.
+#               display_status - flag to enable showing of status dialot
+#                   0 - Don't show status screen, 
+#                   1 - show status screen while wifi power operation in progress,
+# Returns:      none
+######################################################################
+wifi_info_power()
+{
+    vmsg "wifi_info_power($1)"
+    MODE="$1"
+    SHOW_STATUS="$2"
+    case "$1" in
+
+        $WIFI_POWER_OFF)
+            vmsg "Turning WIFI power OFF..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wifi_power_inform_user $WIFI_POWER_OFF
+            fi
+            do_local_echo "Setting WIFI StopWan property to power OFF..."
+            lipc-set-prop $WIFI_DBUS_ENTRYPOINT stopWan 0
+            do_local_echo "Waiting for WIFI to power off..."
+
+            # Loop waiting for powerState to go off
+            WAIT_COUNT=0
+            while [ $WIFI_POWER_STATE_OFF -ne `lipc-get-prop $WIFI_DBUS_ENTRYPOINT powerState` ]; do
+                WAIT_COUNT=$(($WAIT_COUNT+1));
+                if [ $WAIT_COUNT -ge $WIFI_POWER_OFF_TIMEOUT ]; then
+                    pstate=`lipc-get-prop $WIFI_DBUS_ENTRYPOINT powerState`
+                    do_local_echo "WIFI Power Off pstate = $pstate"
+                    return 1
+                fi
+                sleep 1
+            done
+            ;;    
+
+        $WIFI_POWER_ON)
+            vmsg "Turning WIFI power ON..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wifi_power_inform_user $WIFI_POWER_ON
+            fi
+            do_local_echo "Setting WIFI StartWan property to power ON..."
+            lipc-set-prop $WIFI_DBUS_ENTRYPOINT startWan 1
+            do_local_echo "Waiting for WIFI to power on..."
+
+            # Loop waiting for WIFI to get powered on
+            WAIT_COUNT=0
+            while [ $WIFI_POWER_STATE_ON -ne `lipc-get-prop $WIFI_DBUS_ENTRYPOINT powerState` ]; do
+                WAIT_COUNT=$(($WAIT_COUNT+1));
+                if [ $WAIT_COUNT -ge $WIFI_POWER_ON_TIMEOUT ]; then
+                    return 1
+                fi
+                sleep 1
+            done
+            ;;    
+
+        *)
+            do_local_echo "wifi_info_power(): ERROR - unknown WIFI power mode $1"
+            ;;    
+
+    esac
+}
+
+
+######################################################################
+# Function:     wifi_power_background
+# Purpose:      Power the WIFI module into one of its three power modes.
+#               Issue the command in the background to allow returning
+#               immediately.
+# Paramters:    mode - power mode to put WIFI module into.
+#                   One of WIFI_POWER_OFF or WIFI_POWER_ON.
+#               display_status - flag to enable showing of status dialot
+#                   0 - Don't show status screen, 
+#                   1 - show status screen while wifi power operation 
+#                       is in progress
+# Returns:      none
+######################################################################
+wifi_power_background()
+{
+    vmsg "wifi_power_background($1,$2)"
+    MODE="$1"
+    SHOW_STATUS="$2"
+    case "$1" in
+        $WIFI_POWER_OFF)
+            vmsg "Turning WIFI power OFF in background..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wifi_power_inform_user $WIFI_POWER_OFF
+            fi
+            echo 0 > "$WIFI_ENABLE_ENTRY" > /dev/null 2>&1 &
+            ;;    
+
+        $WIFI_POWER_ON)
+            vmsg "Turning WIFI power ON in background..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wifi_power_inform_user $WIFI_POWER_ON
+            fi
+            echo 1 > "$WIFI_ENABLE_ENTRY" > /dev/null 2>&1 &
+            ;;    
+
+        *)
+            do_local_echo "wifi_power_background(): ERROR - unknown WIFI power mode $1"
+            ;;    
+
+    esac
+}
+
+
+######################################################################
+# Function:     wifi_power
+# Purpose:      Power the WIFI module into one of its three power modes.
+# Paramters:    mode - power mode to put WIFI module into.
+#                   Either WIFI_POWER_OFF or WIFI_POWER_ON.
+#               display_status - flag to enable showing of status dialot
+#                   0 - Don't show status screen, 
+#                   1 - show status screen while wifi power operation in progress,
+# Returns:      none
+######################################################################
+wifi_power()
+{
+    vmsg "wifi_power($1)"
+    MODE="$1"
+    SHOW_STATUS="$2"
+    case "$1" in
+        $WIFI_POWER_OFF)
+            vmsg "Turning WIFI power OFF..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wifi_power_inform_user $WIFI_POWER_OFF
+            fi
+            echo 0 > "$WIFI_ENABLE_ENTRY" > /dev/null 2>&1
+            ;;    
+
+        $WIFI_POWER_ON)
+            vmsg "Turning WIFI power ON..."
+            if [ $SHOW_STATUS -eq 1 ]; then
+                wifi_power_inform_user $WIFI_POWER_ON
+            fi
+            echo 1 > "$WIFI_ENABLE_ENTRY" > /dev/null 2>&1
+            ;;    
+        *)
+            do_local_echo "wifi_power(): ERROR - unknown WIFI power mode $1"
+            ;;    
+
+    esac
+}
+
+
+######################################################################
+# Function:     wifi_power_verify_fct
+# Purpose:      Verify wifi operation is complete
+# Paramters:    mode - power mode to put WIFI module into.
+#                   Either WIFI_POWER_OFF or WIFI_POWER_ON
+# Returns:      0 - WIFI has reached target power mode
+######################################################################
+wifi_power_verify_fct()
+{
+    return 0
+}
+
+######################################################################
+# Function:     wifi_get_mac_address
+# Purpose:      Get the MAC address from the WIFI module
+# Paramters:    none
+# Returns:      0 - success getting MAC address
+#               non-zero - error returnred from lipc-get-prop trying to
+#                           get WIFI MAC address
+# Side Effects: Sets the WIFI_MAC_ADDRESS global variable
+######################################################################
+wifi_get_mac_address()
+{
+    return $RETVAL
+}
+
+
+######################################################################
+# Function:     wifi_display_power_failure
+# Purpose:      Display a test failure message to the user
+# Paramters:    mode - wan target power mode, one of:
+#                   WIFI_POWER_ON or WIFI_POWER_OFF
+#               verify - 0 to require operator to dismiss dialog
+#                        1 to auto-dismiss dialog
+# Returns:      none
+######################################################################
+wifi_display_power_failure()
+{
+    MODE="$1"
+    NO_OPERATOR_VERIFY="$2"
+    case "$MODE" in
+        $WIFI_POWER_ON)
+            MODE_TEXT="on"
+            ;;
+        $WIFI_POWER_OFF)
+            MODE_TEXT="off"
+            ;;
+        *)
+            MODE_TEXT="Unknown"
+    esac
+
+    # Tell user about the failure
+    clear_screen
+    banner="WIFI Module Failure"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    center_text "FAILED" 8 "$base"
+    ${DOUT} -n $? 8 "FAILED"
+
+    banner="Timed out waiting for WIFI Module to power $MODE_TEXT."
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 11 "$banner"
+    
+    if [ $NO_OPERATOR_VERIFY -eq 1 ]; then
+        ${DOUT} 4 22 ""
+        sleep $WIFI_DISPLAY_TIME_AUTO_MODE
+    else
+        banner="Press $EXIT_KEY_LABEL to exit WIFI test."
+        center_text "$banner" 8 "$base"
+        ${DOUT} $? 16 "$banner"
+        wait_for_key $EXIT_KEY
+    fi
+}
+
+
+######################################################################
+# Function:     wifi_verify_chip_alive
+# Purpose:      Verify the wifi chip is alive and responding
+# Paramters:    no_operator_verify
+#                   1 - Don't require operator to verify results
+#                   0 - wait for operator to verify results
+# Returns:      0 - Chip responding as expected
+#				1 - Chip NOT responding as expected
+######################################################################
+wifi_verify_chip_alive()
+{
+    if [ $# -ge 1 ]; then
+        NO_OPERATOR_VERIFY=$1
+    else
+        NO_OPERATOR_VERIFY=0
+    fi
+    _WIFI_FAILED=0
+
+    # Tell user about the failure
+    clear_screen
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    print_center_text "WIFI Module Verification" "$base" 8 4
+    _msg="Loading wifi drivers now..."
+    center_text "$_msg" 8 "$base"
+    ${DOUT} $? 8 "$_msg"
+
+    # Load the wifi driver
+    # Add timeout to bmiloader to kill it and return bad status
+
+    ${LOAD_WIFI_DRIVERS} > /dev/null 2>&1    &
+
+    # with the latest fix, bmiloader can time out
+    CHIP_ALIVE=0
+
+    # bmiloader returns 255 when it fails.
+    ${WIFI_BMILOADER} -i wlan0 --info
+    ret_val=$?
+    if [ $ret_val -eq 0 ]; then
+            CHIP_ALIVE=1
+        fi
+    erase_line 8
+    if [ $CHIP_ALIVE -ne 1 ]; then
+        center_text "FAILED" 8 "$base"
+        ${DOUT} -n $? 8 "FAILED"
+        banner="WIFI module failed to respond."
+
+        _WIFI_FAILED=1
+        killall -9 wifi
+        killall -9 loadAR6000.sh
+        killall -9 plat_SHASTA_NATIVEMMC-SDIO.sh
+        killall -9 bmiloader
+
+    else
+        center_text "PASSED" 8 "$base"
+        ${DOUT} -n $? 8 "PASSED"
+        banner="WIFI module responded as expected."
+    fi
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 11 "$banner"
+
+    if [ $NO_OPERATOR_VERIFY -eq 1 ]; then
+        ${DOUT} 4 22 ""
+        sleep $WIFI_DISPLAY_TIME_AUTO_MODE
+    else
+        banner="Press $EXIT_KEY_LABEL to exit WIFI test."
+        center_text "$banner" 8 "$base"
+        ${DOUT} $? 16 "$banner"
+        wait_for_key $EXIT_KEY
+    fi
+    sleep 5
+    # Unload driver before exiting
+	echo "unloading WIFI driver"
+	${DOUT} 15 10 "unloading WIFI driver"
+#    ${UNLOAD_WIFI_DRIVERS} > /dev/null 2>&1
+	 ${UNLOAD_WIFI_DRIVERS}
+    echo "unloading WIFI driver done"
+    ${DOUT} 15 10 "UNLOADING wifi DRIVER done"
+    return ${_WIFI_FAILED}
+}
+
+
+#####################################################################
+# Function:     wifi_display_511_pass_but_export_failed
+# Purpose:      Displays the dialog explaining that the 511 test passed,
+#               but that we failed to copy and/or export the file on
+#               the exported USB volume.
+# Paramters:    1 - Couldn't find source file
+#               2 - Couldn't find USB export volume
+# Returns:      none
+######################################################################
+wifi_display_511_pass_but_export_failed()
+{
+    reason="$1"
+    clear_screen
+    ${DOUT} -n 14 4 "WIFI 511 Test Results"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 17 9 "FAILED"
+
+    case "$reason" in
+        1)
+            ${DOUT} -n 8 11 "The 511 test passed, but could not find"
+            ${DOUT} -n 8 13 "$WIFI_511_RESULTS_OUTPUT_FILE results file to export."
+            ;;
+        2)
+            ${DOUT} -n 8 11 "The 511 test passed, but could not find"
+            ${DOUT} -n 8 13 "$USB_EXPORT_VOLUME to copy file to."
+            ;;
+        *)
+            ${DOUT} -n 8 11 "Unknown test result $reason"
+            ;;
+    esac
+    ${DOUT} 8 16 "Press $EXIT_KEY_LABEL to exit the WIFI 511 test."
+    wait_for_key $EXIT_KEY
+}
+
+
+wifi_prep_and_export_511_status()
+{
+    dev_get_serial_number
+    echo -n "$DEVICE_SERIAL_NUMBER" >  "${WIFI_511_RESULTS_OUTPUT_FILE}"
+
+    # Append the MAC address and pcba number, if MAC address is supported
+    if [ -n "$HAS_MAC_ADDRESS" ] && [ $HAS_MAC_ADDRESS -eq 1 ]; then
+        dev_get_mac_address
+        echo -n ",$DEVICE_MAC_ADDRESS" >> "${WIFI_511_RESULTS_OUTPUT_FILE}"
+        dev_get_manuf_code
+        echo -n ",$DEVICE_MANUF_CODE" >> "${WIFI_511_RESULTS_OUTPUT_FILE}"
+        dev_get_pcb_id
+        echo ",$DEVICE_PCB_ID" >> "${WIFI_511_RESULTS_OUTPUT_FILE}"
+    else
+        echo -n "HAS_WIFI = $HAS_WIFI, HAS_MAC_ADDRESS = $HAS_MAC_ADDRESS"
+    fi
+
+    # Copy the file to the FAT partition and export it...
+    usb_copy_to_export_volume "$WIFI_511_RESULTS_OUTPUT_FILE" "$WIFI_511_RESULTS_FILENAME"
+    copy_failed="$?"
+    if [ "$copy_failed" -eq 0 ]; then
+        export_usb_volumes
+        return 0
+    else
+        clear_screen
+        ${DOUT} -n 17 4 "WIFI 511 Test"
+        ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ${DOUT} -n 8 7 "Failed to copy 511 results file to"
+        ${DOUT} -n 8 9 "the USB export volume because"
+        if [ $copy_failed -eq 1 ]; then
+            ${DOUT} -n 8 11 "$USB_EXPORT_VOLUME is missing."
+        else
+            ${DOUT} -n 8 11 "$WIFI_511_RESULTS_OUTPUT_FILE is missing."
+        fi
+        ${DOUT} 8 14 "Press $EXIT_KEY_LABEL to continue."
+        wait_for_key $EXIT_KEY
+        return 1
+    fi
+
+
+}                                                                                                                                                                 
+
+#####################################################################
+# Function:     wifi_display_511_pass_but_export_failed
+# Purpose:      Displays the dialog explaining that the 511 test passed,
+#               but that we failed to copy and/or export the file on
+#               the exported USB volume.
+# Paramters:    1 - Couldn't find source file
+#               2 - Couldn't find USB export volume
+# Returns:      none
+######################################################################
+wifi_display_511_pass_but_export_failed()
+{
+    reason="$1"
+    clear_screen
+    ${DOUT} -n 14 4 "WIFI 511 Test Results"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 17 9 "FAILED"
+
+    case "$reason" in
+        1)
+            ${DOUT} -n 8 11 "The 511 test passed, but could not find"
+            ${DOUT} -n 8 13 "$WIFI_511_RESULTS_OUTPUT_FILE results file to export."
+            ;;
+        2)
+            ${DOUT} -n 8 11 "The 511 test passed, but could not find"
+            ${DOUT} -n 8 13 "$USB_EXPORT_VOLUME to copy file to."
+            ;;
+        *)
+            ${DOUT} -n 8 11 "Unknown test result $reason"
+            ;;
+    esac
+    ${DOUT} 8 16 "Press $EXIT_KEY_LABEL to exit the WIFI 511 test."
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     wifi_display_511_results
+# Purpose:      Displays the PASS/FAIL result of the 511 test
+# Paramters:    TEST_FAILED - results of 511 test; one of:
+#                   0 - Test Passed
+#                   1 - Test Failed
+# Returns:      none
+######################################################################
+wifi_display_511_results()
+{
+    TEST_FAILED="$1"
+    clear_screen
+
+    # Center banner
+    banner="WIFI 511 Test Results"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 8 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 8 5 "$base"
+    case "$TEST_FAILED" in
+        0)
+            center_text "PASSED" 8 "$base"
+            ${DOUT} -n $? 7 "PASSED"
+            ${DOUT} -n 6 11 "Copy the $WIFI_511_RESULTS_FILENAME file from the"
+            ${DOUT} -n 6 13 "host machines /media/Kindle directory now."
+            ${DOUT} -n 6 21 "Press $EXIT_KEY_LABEL to exit the 511 test once the"
+            ${DOUT} 6 23 "file has been copied off the device."
+            ;;
+        1)
+            center_text "FAILED" 8 "$base"
+            ${DOUT} -n $? 9 "FAILED"
+            ${DOUT} 8 13 "Press $EXIT_KEY_LABEL to exit the WIFI 511 test."
+            ;;
+        *)
+            ${DOUT} -n 8 9 "Unknown test result $TEST_FAILED"
+            ${DOUT} 8 13 "Press $EXIT_KEY_LABEL to exit the WIFI 511 test."
+            ;;
+    esac
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     wifi_display_511_test_running
+# Purpose:      Display message telling user we're running the 511 test.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wifi_display_511_test_running()
+{
+    # Display information to the user
+    clear_screen
+    ${DOUT} -n 17 4 "WIFI 511 Test"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} 8 7 "Running the 511 test."
+}
+
+
+######################################################################
+# Function:     wifi_display_battery_low
+# Purpose:      Display message telling user we're running the 511 test.
+# Paramters:    none
+# Returns:      1 - Operator wants to still run 511 test
+#               0 - Operator wants to cancel request for 511 test
+######################################################################
+wifi_display_battery_low()
+{
+    _CUR_LEVEL="$1"
+ 
+    # Display information to the user
+    clear_screen
+    ${DOUT} -n 17 4 "WIFI 511 Test"
+    ${DOUT} -n 6 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 6 7 "WARNING : The current battery charge level"
+    ${DOUT} -n 6 9 "of $_CUR_LEVEL is below recommended level of $WIFI_511_BATTERY_LEVEL."
+    ${DOUT} -n 6 13 "Press $SUCCESS_KEY_LABEL to continue 511 test."
+    ${DOUT} 6 15 "Press $EXIT_KEY_LABEL to abort 511 test."
+    while [ 1 -eq 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        if [ $? -eq 0 ]; then
+            case "$KEY" in
+                $SUCCESS_KEY)
+                    return 1
+                    ;;
+
+                $EXIT_KEY)
+                    return 0
+                    ;;
+
+                *)
+                    ;;
+            esac
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     wifi_511_test
+# Purpose:      Tell the system to execute the Wifi 511 test.
+# Paramters:    operator_verify
+#                   1 to run in cycle (no operator verify) mode
+#                   0 to run in operator verify mode
+# Returns:      0 - test succeeded
+#               1 - test failed
+#               2 - operator canceled due to low battery
+# Side Effect:  Clears the SUB_TEST_PASSED variable on failure
+######################################################################
+wifi_511_test()
+{
+    # Running in auto mode or not?
+    NO_OPERATOR_VERIFY=$1
+
+    # Check if we have enough battery juice, warn operator if we don't
+    if [ "x$REQUIRE_WIFI_511_POWER" == "x1" ]; then
+        BATTERY_LEVEL=`${BATTERY_CAPACITY} | sed s/\%//g` > /dev/null 2>&1
+        if [ $BATTERY_LEVEL -lt $WIFI_511_BATTERY_LEVEL ]; then
+            wifi_display_battery_low $BATTERY_LEVEL
+            if [ $? -eq 0 ]; then
+                # Operator wants to cancel test request
+                return 2
+            fi
+        fi
+    fi
+
+    # Run the 511 test
+    wifi_display_511_test_running
+
+    # Prepare the results file and export it...
+    wifi_prep_and_export_511_status
+    if [ "$?" -eq 0 ]; then
+	wifi_display_511_results 0
+        un_export_usb_volumes
+        usb_delete_from_export_volume "$WIFI_511_RESULTS_FILENAME"
+    else
+        wifi_display_511_pass_but_export_failed
+    fi
+
+    clear_screen
+    success "WIFI 511 Test"
+
+    return 0
+}
+
+
+#___________________________________________________________________
+#
+#   WIFI HAL Initialization and Teardown Routines Start Here...
+#
+#___________________________________________________________________
+#
+
+######################################################################
+# Function:     wifi_hal_init
+# Purpose:      Hal initialization routine for WIFI.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      0 - All support verified present
+######################################################################
+wifi_hal_init()
+{
+    vmsg "wifi_hal_init()"
+	return 0
+}
+
+
+######################################################################
+# Function:     wifi_hal_exit
+# Purpose:      Hal initialization routine for WIFI.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+wifi_hal_exit()
+{
+    vmsg "wifi_hal_exit()"
+}
+
+######################################################################
+# Function:    do_print_art_header
+# Purpose:     print common ART header
+# Paramters:   none
+# Returns:     next line number
+######################################################################
+do_print_art_header()
+{
+    clear_screen
+    banner="WIFI ART Diagnostics"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 5 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 5 5 "$base"
+    return 8
+}
+     
+######################################################################
+# Function:    do_run_wifi_art_choose_wifi_band
+# Purpose:     Wifi test utility using ART
+#              Level 1: Choose WIFI Band, US or EU
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_choose_wifi_band()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Selecting WIFI BAND            "
+    let line_number+=2
+    text=`keycode_to_label $WIFI_BAND_MENU_ITEM_1`
+    ${DOUT} -n 2 $line_number "$text) US Band"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_BAND_MENU_ITEM_2`
+    ${DOUT} -n 2 $line_number "$text) EU Band"
+    let line_number+=2
+    ${DOUT} 8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    
+    while [ $DONE -eq 0 ]; do
+         KEY=`$GET_KEYBOARD_INPUT`
+         RETVAL=$?
+         if [ $RETVAL -eq 0 ]; then
+         
+             #
+             # Process key request
+             case "$KEY" in
+             
+             $WIFI_BAND_MENU_ITEM_1)
+                 echo "US band selected..."
+                 WIFI_BAND="US"
+                 DONE=1
+                 ;;
+             
+             $WIFI_BAND_MENU_ITEM_2)
+                 echo "EU band selected..."
+                 WIFI_BAND="EU"
+                 DONE=1
+                 ;;
+             
+             $EXIT_KEY)
+                 # User pressed the target key, verify visual via asking operator
+                 DONE=1
+                 return ${WIFI_EXIT}
+                 ;;
+             *)
+                 DONE=0
+                 ;;
+             
+             esac
+         fi
+    done
+    echo "choose WIFI band $WIFI_BAND"
+    return ${WIFI_SUCCESS}
+}
+
+
+######################################################################
+# Function:    do_run_wifi_art_choose_channel
+# Purpose:     Wifi test utility using ART
+#              Level 2: Choose channel to test: 
+#                   * US: 1, 6, 11
+#                   * EU: 1, 7, 13
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_choose_channel()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Choose channel                 "
+    let line_number=line_number+2
+    if [ $WIFI_BAND = "US" ]; then
+
+        text=`keycode_to_label $WIFI_US_CH_MENU_ITEM_1`
+        ${DOUT} -n 2 $line_number "$text) US Ch 1  (2412 MHz)"
+        let line_number+=2
+        text=`keycode_to_label $WIFI_US_CH_MENU_ITEM_2`
+        ${DOUT} -n 2 $line_number "$text) US Ch 6  (2437 MHz)"
+        let line_number+=2
+        text=`keycode_to_label $WIFI_US_CH_MENU_ITEM_3`
+        ${DOUT} -n 2 $line_number "$text) US Ch 11 (2462 MHz)"
+        let line_number+=2
+    else
+
+        text=`keycode_to_label $WIFI_EU_CH_MENU_ITEM_1`
+        ${DOUT} -n 2 $line_number "$text) EU Ch 1  (2412 MHz)"
+        let line_number+=2
+        text=`keycode_to_label $WIFI_EU_CH_MENU_ITEM_2`
+        ${DOUT} -n 2 $line_number "$text) EU Ch 7  (2442 MHz)"
+        let line_number+=2
+        text=`keycode_to_label $WIFI_EU_CH_MENU_ITEM_3`
+        ${DOUT} -n 2 $line_number "$text) EU Ch 13 (2472 MHz)"
+        let line_number+=2
+    fi
+    ${DOUT} 8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+        
+        #
+        # Process key request
+        case "$KEY" in
+        
+            $WIFI_US_CH_MENU_ITEM_1)
+                echo "Channel 1 selected..."
+                WIFI_FREQ="2412"
+                DONE=1
+                ;;
+            
+            $WIFI_US_CH_MENU_ITEM_2)
+                echo "Channel 6 selected..."
+                WIFI_FREQ="2437"
+                DONE=1
+                ;;
+            $WIFI_US_CH_MENU_ITEM_3)
+                echo "Channel 11 selected..."
+                WIFI_FREQ="2462"
+                DONE=1
+                ;;
+        
+            $WIFI_EU_CH_MENU_ITEM_1)
+                echo "Channel 1 selected..."
+                WIFI_FREQ="2412"
+                DONE=1
+                ;;
+            $WIFI_EU_CH_MENU_ITEM_2)
+                echo "Channel 7 selected..."
+                WIFI_FREQ="2442"
+                DONE=1
+                ;;
+            $WIFI_EU_CH_MENU_ITEM_3)
+                echo "Channel 13 selected..."
+                WIFI_FREQ="2472"
+                DONE=1
+                ;;
+            
+            $EXIT_KEY)
+                # User pressed the target key, verify visual via asking operator
+                DONE=1
+                return ${WIFI_EXIT}
+                ;;
+            *)
+                DONE=0
+                ;;
+            
+            esac
+        fi
+    done
+    return ${WIFI_SUCCESS}
+}
+
+######################################################################
+# Function:    do_run_wifi_art_choose_rate_11b
+# Purpose:     Wifi test utility using ART
+#              - Choose date rate depending on the mode
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_choose_rate_11b()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Select rate for 11b "
+    text=`keycode_to_label $WIFI_DT_RATE_11B___1L_____MBPS_ITEM_1`
+    let line_number+=2
+    ${DOUT} -n 2 $line_number "$text) Rate 1L Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11B___2L_____MBPS_ITEM_2`
+    ${DOUT} -n 2 $line_number "$text) Rate 2L Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11B_5_5L_____MBPS_ITEM_4`
+    ${DOUT} -n 2 $line_number "$text) Rate 5.5 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11B__11L_____MBPS_ITEM_6`
+    ${DOUT} -n 2 $line_number "$text) Rate 11 Mbps"
+    let line_number+=2
+
+    ${DOUT} 8 line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+    
+            #
+            # Process key request
+            case "$KEY" in
+            
+            $WIFI_DT_RATE_11B___1L_____MBPS_ITEM_1)
+                echo "Rate   1L Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11B___1L_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11B___2L_____MBPS_ITEM_2)
+                echo "Rate   2L Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11B___2L_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11B_5_5L_____MBPS_ITEM_4)
+                echo "Rate 5.5 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11B_5_5L_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11B__11L_____MBPS_ITEM_6)
+                echo "Rate 11 Mbps selected... "
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11B___1L_____MBPS
+                DONE=1
+                ;;
+
+            $EXIT_KEY)
+                # User pressed the target key, verify visual via asking operator
+                DONE=1
+                return ${WIFI_EXIT}
+                ;;
+            *)
+                DONE=0
+                ;;
+            
+            esac
+        fi
+    done
+    return ${WIFI_SUCCESS}
+}
+
+######################################################################
+# Function:    do_run_wifi_art_choose_rate_11g
+# Purpose:     Wifi test utility using ART
+#              - Choose date rate depending on the mode
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_choose_rate_11g()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Select rate for 11g "
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G____6_____MBPS_ITEM_1`
+    ${DOUT} -n 2 $line_number "$text) Rate 6 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G____9_____MBPS_ITEM_2`
+    ${DOUT} -n 2 $line_number "$text) Rate 9 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G___12_____MBPS_ITEM_3`
+    ${DOUT} -n 2 $line_number "$text) Rate 12 Mbps"
+    text=`keycode_to_label $WIFI_DT_RATE_11G___18_____MBPS_ITEM_4`
+    let line_number+=2
+    ${DOUT} -n 2 $line_number "$text) Rate 18 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G___24_____MBPS_ITEM_5`
+    ${DOUT} -n 2 $line_number "$text) Rate 24 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G___36_____MBPS_ITEM_6`
+    ${DOUT} -n 2 $line_number "$text) Rate 36 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G___48_____MBPS_ITEM_7`
+    ${DOUT} -n 2 $line_number "$text) Rate 48 Mbps"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_DT_RATE_11G___54_____MBPS_ITEM_8`
+    ${DOUT} -n 2 $line_number "$text) Rate 54 Mbps"
+    let line_number+=2
+
+    ${DOUT} 8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+    
+            #
+            # Process key request
+            case "$KEY" in
+            
+            $WIFI_DT_RATE_11G____6_____MBPS_ITEM_1)
+                echo "Rate  6 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G____6_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G____9_____MBPS_ITEM_2)
+                echo "Rate  9 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G____9_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G___12_____MBPS_ITEM_3)
+                echo "Rate 12 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G___12_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G___18_____MBPS_ITEM_4)
+                echo "Rate 18 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G___18_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G___24_____MBPS_ITEM_5)
+                echo "Rate 24 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G___24_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G___36_____MBPS_ITEM_6)
+                echo "Rate 36 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G___36_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G___48_____MBPS_ITEM_7)
+                echo "Rate 48 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G___48_____MBPS
+                DONE=1
+                ;;
+
+            $WIFI_DT_RATE_11G___54_____MBPS_ITEM_8)
+                echo "Rate 54 Mbps selected..."
+                WIFI_DATA_RATE_INDEX=$WIFI_DT_RATE_11G___54_____MBPS
+                DONE=1
+                ;;
+
+            $EXIT_KEY)
+                # User pressed the target key, verify visual via asking operator
+                DONE=1
+                return ${WIFI_EXIT}
+                ;;
+            *)
+                DONE=0
+                ;;
+            
+            esac
+        fi
+    done
+    return ${WIFI_SUCCESS}
+}
+
+######################################################################
+# Function:    do_run_select_tx_power_level
+# Purpose:     Wifi test utility using ART
+#              Choose power level for Tx continuous test
+#                   - MAX power
+#                   - NORMAL power
+# Paramters:   none
+# Returns:     none
+######################################################################
+
+do_run_select_tx_power_level()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Select power level for Tx test "
+    let line_number+=2
+    text=`keycode_to_label $WIFI_POWER_LEVEL_MAX____ITEM_1`
+    ${DOUT} -n 2 $line_number "$text) MAX power"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_POWER_LEVEL_NORMAL_ITEM_2`
+    ${DOUT} -n 2 $line_number "$text) NORMAL power"
+    let line_number+=2
+    ${DOUT} 8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+    
+            #
+            # Process key request
+            case "$KEY" in
+            
+            $WIFI_POWER_LEVEL_MAX____ITEM_1)
+                echo "Max power level selected..."
+                WIFI_USE_TARGET_POWER=1
+                DONE=1
+                ;;
+            
+            $WIFI_POWER_LEVEL_NORMAL_ITEM_2)
+                echo "Normal power level selected..."
+                WIFI_USE_TARGET_POWER=0
+                DONE=1
+                ;;
+            
+            $EXIT_KEY)
+                # User pressed the target key, verify visual via asking operator
+                WIFI_USE_TARGET_POWER=0
+                DONE=1
+                return ${WIFI_EXIT}
+                ;;
+            *)
+                WIFI_USE_TARGET_POWER=0
+                DONE=0
+                ;;
+            
+            esac
+        fi
+    done
+    return ${WIFI_SUCCESS}
+
+}
+
+######################################################################
+# Function:    do_run_select_antenna
+# Purpose:     Wifi test utility using ART
+#              Choose antenna
+#                   - ANT A
+#                   - ANT B
+# Paramters:   none
+# Returns:     none
+######################################################################
+
+do_run_select_antenna()
+{
+    # currently 
+    WIFI_FORCE_ANT_A=0
+    
+    return
+}
+
+######################################################################
+# Function:    do_run_wifi_art_choose_test
+# Purpose:     Wifi test utility using ART
+#              Level 3: Choose Tx or Rx test
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_choose_test()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Selectig test                "
+    let line_number+=2
+    text=`keycode_to_label $WIFI_TEST_MENU_ITEM_1`
+    ${DOUT} -n 2 $line_number "$text) Tx continuous"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_TEST_MENU_ITEM_2`
+    ${DOUT} -n 2 $line_number "$text) Rx"
+    let line_number+=2
+    ${DOUT} 8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+    
+            #
+            # Process key request
+            case "$KEY" in
+            
+            $WIFI_TEST_MENU_ITEM_1)
+                echo "Tx continuous test selected..."
+                WIFI_ART_TEST="1"
+                # select power level for the Tx test
+                do_run_select_tx_power_level
+                DONE=1
+                ;;
+            
+            $WIFI_TEST_MENU_ITEM_2)
+                echo "Rx test selected..."
+                WIFI_ART_TEST="0"
+                DONE=1
+                ;;
+            
+            $EXIT_KEY)
+                # User pressed the target key, verify visual via asking operator
+                DONE=1
+                return ${WIFI_EXIT}
+                ;;
+            *)
+                DONE=0
+                ;;
+            
+            esac
+        fi
+    done
+    return ${WIFI_SUCCESS}
+
+}
+
+do_extract_art()
+{
+    if [ -f ${DIAGNOSTIC_ROOT}/tests/wifi/art_files.tar ]; then
+        cd ${DIAGNOSTIC_ROOT}/tests/wifi/
+        mntroot_rw
+        tar -xvf art_files.tar
+        rm art_files.tar
+        cd -
+        mntroot_ro
+    fi
+    if ! [ -f ${WIFI_TEST_UTIL} ]; then
+        failure "can not extract ART"
+        do_print_art_header
+        let line_number=$?
+        ${DOUT} -n 8 $line_number "Cannot find ART utility"
+        let line_number+=2
+        ${DOUT}    8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+        wait_for_key $EXIT_KEY
+        return $WIFI_FAILED
+    fi
+    return $WIFI_SUCCESS
+}
+
+######################################################################
+# Function:    do_run_wifi_art_run_test
+# Purpose:     Wifi test utility using ART
+#              Level 4: run the test.
+# Paramters:   none
+# Returns:     none
+######################################################################
+
+do_run_wifi_art_run_test()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT}    8 $line_number "Loading ART"
+
+    do_extract_art
+    _status="$?"
+    if [ $_status -ne $WIFI_SUCCESS]; then
+        failure "wifi art run test failed, cannot find ART util"
+        return ${WIFI_FAILED}
+    fi
+
+
+    ${WIFI_TEST_UTIL} -s FCC
+    return ${WIFI_SUCCESS}
+}
+
+
+######################################################################
+# Function:    do_run_wifi_art_automation_diag
+# Purpose:     Wifi automation test utility using ART
+#              Choose WIFI Band, US or EU
+#              Choose channel to test: 
+#                   * US: 1, 6, 11
+#                   * EU: 1, 7, 13
+#              Choose Tx or Rx test
+#              Choose mode
+#              Choose Rate
+#              Run the test
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_automation_diag()
+{
+    
+    # Choose WIFI band:  US or EU
+    do_run_wifi_art_choose_wifi_band
+    RETURN_VAL=$?
+    if [ ${RETURN_VAL} -eq ${WIFI_EXIT} ]; then
+        return ${RETURN_VAL}
+    fi
+    do_run_wifi_art_choose_channel
+    RETURN_VAL=$?
+    if [ ${RETURN_VAL} -eq ${WIFI_EXIT} ]; then
+        return ${RETURN_VAL}
+    fi
+#    do_run_select_antenna
+    do_run_wifi_art_choose_test
+    RETURN_VAL=$?
+    if [ ${RETURN_VAL} -eq ${WIFI_EXIT} ]; then
+        return ${RETURN_VAL}
+    fi
+
+    if [ $WIFI_MODE = "11B" ]; then
+        do_run_wifi_art_choose_rate_11b
+    else
+        do_run_wifi_art_choose_rate_11g
+    fi
+    RETURN_VAL=$?
+    if [ ${RETURN_VAL} -eq ${WIFI_EXIT} ]; then
+        return ${RETURN_VAL}
+    fi
+    echo="band = $WIFI_BAND, channel = $WIFI_FREQ, test = $WIFI_ART_TEST"
+    echo="mode = $WIFI_MODE"
+    echo="data rate idx = $WIFI_DATA_RATE_INDEX, targetPower = $WIFI_USE_TARGET_POWER"
+    # run and display menu for use to terminate the test.
+    do_run_wifi_art_run_test
+    RETURN_VAL=$?
+    return ${RETURN_VAL}
+}
+
+wait_user_cancel()
+{
+    clear_screen
+    ${DOUT} -n 10 4 "USB Device Mode Diagnostics"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 8 8 "The USB volume has been exported."
+    ${DOUT} -n 2 11 "Copy data between the USB exported volume"
+    ${DOUT} -n 3 12 "and the PC.  Verify checksum of the copies."
+    ${DOUT} 2 15 "Press $SUCCESS_KEY_LABEL to stop test and return to diag menu."
+                            
+    wait_for_key $SUCCESS_KEY
+                                
+}
+######################################################################
+# Function:     do_run_usb_device_diag
+# Purpose:      Run the main usb device mode diagnostic test.  This
+#               test exports the usb volume, tells the operator to
+#               copy data to/from the volume and then verify the results.
+# Paramters:    none
+# Returns:      none
+# Side Effect:  SUB_TEST_PASSED is cleared on any failure
+######################################################################
+do_run_usb_device_diag()
+{
+    #
+    # Tell user to plug in USB, then export the usb volumes
+    #
+    do_export_usb_volumes "USB Device Mode Diagnostics"
+                
+    #
+    # Wait for user to end the test
+    #
+    wait_user_cancel
+                                
+    #
+    # Unexport the volume
+    #
+    un_export_usb_volumes
+}
+                                                
+
+######################################################################
+# Function:    do_run_wifi_art_factory_diag
+# Purpose:     Wifi automation test utility using ART
+#              Run the factory test
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_factory_diag()
+{
+    echo " wifi_factory diag"
+    do_extract_art
+    _status="$?"
+    if [ $_status -ne $WIFI_SUCCESS ]; then
+        failure "wifi art factory diag failed.  Cannot find ART"
+        return $WIFI_FAILED
+    fi
+
+    # more test here
+    do_print_art_header                                                           
+    line_number=$?                                                                
+    ${DOUT}    8 $line_number "Loading ART"
+
+    ${WIFI_TEST_UTIL} -s device_test             
+    # don't need to export the USB mode any more                                     
+#    do_run_usb_device_diag
+    return $_exit_code
+
+}
+
+######################################################################
+# Function:    do_run_wifi_art_factory_host_AP_emulation
+# Purpose:     Wifi automation test utility using ART
+#              Run the factory host AP emulation test
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_factory_host_AP_emulation()
+{
+    echo " wifi_factory diag"
+    do_extract_art
+    _status="$?"
+    if [ $_status -ne $WIFI_SUCCESS ]; then
+        failure "wifi art factory diag failed.  Cannot find ART"
+        return $WIFI_FAILED
+    fi
+
+    # more test here
+    do_print_art_header                                                           
+    line_number=$?                                                                
+    ${DOUT}    8 $line_number "Loading ART"
+
+    ${WIFI_TEST_UTIL} -s device_host                                                  
+#    do_run_usb_device_diag
+    return $_exit_code
+
+}
+
+
+######################################################################
+# Function:     do_wifi_menu
+# Purpose:      Select between different wifi test mode
+#               - Wifi ART automation test
+#               - Wifi ART interaction test
+#               
+# Paramters:    none
+# Returns:      none
+######################################################################
+
+do_wifi_menu()
+{
+    do_extract_art
+    _status="$?"
+    if [ $_status -ne $WIFI_SUCCESS ]; then
+        failure "Wifi menu: Cannot load ART"
+        return 
+    fi
+    
+    do_print_art_header
+    line_number=$?
+    ${DOUT} -n 2 $line_number "Select WIFI TEST            "
+    let line_number+=2
+    text=`keycode_to_label $WIFI_MENU_ITEM_2`
+    ${DOUT} -n 2 $line_number "$text) ART 11b automation test"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_MENU_ITEM_3`
+    ${DOUT} -n 2 $line_number "$text) ART 11g automation test"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_MENU_ITEM_4`
+    ${DOUT} -n 2 $line_number "$text) ART 11g factory test"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_MENU_ITEM_5`
+    ${DOUT} -n 2 $line_number "$text) ART 11g interactive test"
+    let line_number+=2
+    text=`keycode_to_label $WIFI_MENU_ITEM_6`
+    ${DOUT} -n 2 $line_number "$text) ART host AP emulation"
+
+
+    let line_number+=2
+    ${DOUT} 8 $line_number "Press $EXIT_KEY_LABEL to exit WIFI Diagnostics."
+
+    DONE=0
+    WIFI_RESULT=${WIFI_SUCCESS}
+    while [ $DONE -eq 0 ]; do
+         KEY=`$GET_KEYBOARD_INPUT`
+         RETVAL=$?
+         if [ $RETVAL -eq 0 ]; then
+         
+             #
+             # Process key request
+             case "$KEY" in
+             
+             $WIFI_MENU_ITEM_2)
+                echo "WIFI ART 11b automation selected..."
+                vmsg "Starting WIFI ART 11b test"
+                WIFI_MODE="11B"
+                do_run_wifi_art_automation_diag
+                WIFI_RESULT=$?
+                DONE=1
+                ;;
+             $WIFI_MENU_ITEM_3)
+                echo "WIFI ART 11g automation selected..."
+                vmsg "Starting WIFI ART 11g test"
+                WIFI_MODE="11G"
+                do_run_wifi_art_automation_diag
+                WIFI_RESULT=$?
+                DONE=1
+                ;;
+
+             $WIFI_MENU_ITEM_4)
+                echo "WIFI ART factory test selected..."
+                vmsg "Starting WIFI ART factory test"
+                do_run_wifi_art_factory_diag
+                WIFI_RESULT=$?
+                DONE=1
+                ;;
+                                           
+             $WIFI_MENU_ITEM_5)
+                echo "WIFI ART interaction selected..."
+                vmsg "Starting WIFI ART test"
+                WIFI_MODE=WIFI_11G
+                do_run_wifi_art_interaction_diag
+                WIFI_RESULT=$?
+                DONE=1
+                ;;
+
+             $WIFI_MENU_ITEM_6)
+                echo "WIFI ART AP host emulation selected..."
+                vmsg "Starting WIFI AP host emulation"
+                WIFI_MODE=WIFI_11G
+                do_run_wifi_art_factory_host_AP_emulation
+                WIFI_RESULT=$?
+                DONE=1
+                ;;
+                
+             
+            $EXIT_KEY)
+                # User pressed the target key, verify visual via asking operator
+                DONE=1
+                return ${WIFI_EXIT}
+                ;;
+            *)
+                DONE=0
+                ;;
+             
+             esac
+         fi
+    done
+    return ${WIFI_RESULT}
+}
+
+######################################################################
+# Function:    do_run_wifi_art_interaction_diag
+# Purpose:     Wifi automation test utility using ART
+#              Level 1: Choose WIFI Band, US or EU
+#              Level 2: Choose channel to test: 
+#                   * US: 1, 6, 11
+#                   * EU: 1, 7, 13
+#              Level 3: Choose Tx or Rx test
+#              Level 4: Run the test
+# Paramters:   none
+# Returns:     none
+######################################################################
+do_run_wifi_art_interaction_diag()
+{
+    do_print_art_header
+    line_number=$?
+    ${DOUT}    8 $line_number "Loading ART"
+    # run art here
+    do_extract_art
+    _status="$?"
+    if [ $_status -eq $WIFI_SUCCESS ]; then
+        ${WIFI_TEST_UTIL} -s interactive
+    else
+        failure "$WIFI_TEST_UTIL  not found"
+        return ${WIFI_FAILED}
+    fi
+    return ${WIFI_SUCCESS}
+}
+
+
+# USB Hal for exporting USB volume
+[ -f ${_USB_HAL_FUNCTIONS} ] && . ${_USB_HAL_FUNCTIONS}
+
+# Keyboard HAL
+[ -f ${_KEYBOARD_HAL_FUNCTIONS} ] && . ${_KEYBOARD_HAL_FUNCTIONS}
+
+# Don't include HAL more than once
+if [ "x$_WIFI_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+export WIFI_SUCCESS=0
+export WIFI_FAILED=1
+export WIFI_EXIT=2                                             
+export ART_ROOT="${ART_ROOT:-${DIAGNOSTIC_ROOT}/tests/wifi/${WIFI_ART_BASE}}"
+export WIFI_TEST_UTIL="${ART_ROOT}/deviceArt.sh"
+
+#
+# Constants for WiFi 511 test
+#
+export WIFI_511_RESULTS_TMP_FILE="/tmp/511.log"
+export WIFI_511_RESULTS_FILENAME="${PRODUCT_NAME}-511.log"
+export WIFI_511_RESULTS_OUTPUT_FILE="/tmp/${WIFI_511_RESULTS_FILENAME}"
+
+
+# Power State Constants
+export WIFI_POWER_OFF=0
+export WIFI_POWER_ON=1
+
+
+# WIFI Antenna
+export WIFI_ANT_MENU_ITEM_1=$KEY_A
+export WIFI_ANT_MENU_ITEM_2=$KEY_B
+
+# WIFI US BAND
+export WIFI_BAND_MENU_ITEM_1=$KEY_U
+# WIFI EU BAND
+export WIFI_BAND_MENU_ITEM_2=$KEY_E
+
+# US band channel 1, 2412 MHz
+export WIFI_US_CH_MENU_ITEM_1=$KEY_Q
+# US band channel 6, 2437 MHz
+export WIFI_US_CH_MENU_ITEM_2=$KEY_W
+# US band channel 11, 2462 MHz
+export WIFI_US_CH_MENU_ITEM_3=$KEY_E
+# EU band channel 1, 2412 MHz
+export WIFI_EU_CH_MENU_ITEM_1=$KEY_R
+# EU band channel 7, 2442 MHz
+export WIFI_EU_CH_MENU_ITEM_2=$KEY_T
+# EU band channel 13, 2472 MHz
+export WIFI_EU_CH_MENU_ITEM_3=$KEY_Y
+                                               
+                            
+# Tx continuous test
+export WIFI_TEST_MENU_ITEM_1=$KEY_T
+# Rx test
+export WIFI_TEST_MENU_ITEM_2=$KEY_R
+
+# Wifi power test
+export WIFI_MENU_ITEM_1=$KEY_P
+export WIFI_MENU_ITEM_2=$KEY_B
+export WIFI_MENU_ITEM_3=$KEY_G
+export WIFI_MENU_ITEM_4=$KEY_Q
+export WIFI_MENU_ITEM_5=$KEY_I
+export WIFI_MENU_ITEM_6=$KEY_U
+
+# wifi Tx power level
+export WIFI_TX_PWR_ITEM_1=$KEY_Q
+export WIFI_TX_PWR_ITEM_2=$KEY_W
+
+
+# Wifi data rate in 11b
+export WIFI_DT_RATE_11B___1L_____MBPS_ITEM_1=$KEY_Q
+export WIFI_DT_RATE_11B___2L_____MBPS_ITEM_2=$KEY_W
+export WIFI_DT_RATE_11B___2S_____MBPS_ITEM_3=$KEY_E
+export WIFI_DT_RATE_11B_5_5L_____MBPS_ITEM_4=$KEY_R
+export WIFI_DT_RATE_11B_5_5S_____MBPS_ITEM_5=$KEY_T
+export WIFI_DT_RATE_11B__11L_____MBPS_ITEM_6=$KEY_Y
+export WIFI_DT_RATE_11B__11S_____MBPS_ITEM_7=$KEY_U
+export WIFI_DT_RATE_11B__XR0_025_MBPS_ITEM_8=$KEY_I
+export WIFI_DT_RATE_11B__XR0_050_MBPS_ITEM_9=$KEY_O
+export WIFI_DT_RATE_11B__XR1_____MBPS_ITEM_10=$KEY_P
+export WIFI_DT_RATE_11B__XR2_____MBPS_ITEM_11=$KEY_A
+export WIFI_DT_RATE_11B__XR3_____MBPS_ITEM_12=$KEY_S
+
+# Wifi data rate in 11g
+export WIFI_DT_RATE_11G____6_____MBPS_ITEM_1=$KEY_Q
+export WIFI_DT_RATE_11G____9_____MBPS_ITEM_2=$KEY_W
+export WIFI_DT_RATE_11G___12_____MBPS_ITEM_3=$KEY_E
+export WIFI_DT_RATE_11G___18_____MBPS_ITEM_4=$KEY_R
+export WIFI_DT_RATE_11G___24_____MBPS_ITEM_5=$KEY_T
+export WIFI_DT_RATE_11G___36_____MBPS_ITEM_6=$KEY_Y
+export WIFI_DT_RATE_11G___48_____MBPS_ITEM_7=$KEY_U
+export WIFI_DT_RATE_11G___54_____MBPS_ITEM_8=$KEY_I
+
+# index to ART wifi data rate array
+export WIFI_DT_RATE_11G____6_____MBPS=0
+export WIFI_DT_RATE_11G____9_____MBPS=1
+export WIFI_DT_RATE_11G___12_____MBPS=2
+export WIFI_DT_RATE_11G___18_____MBPS=3
+export WIFI_DT_RATE_11G___24_____MBPS=4
+export WIFI_DT_RATE_11G___36_____MBPS=5
+export WIFI_DT_RATE_11G___48_____MBPS=6
+export WIFI_DT_RATE_11G___54_____MBPS=7
+export WIFI_DT_RATE_11B___1L_____MBPS=8
+export WIFI_DT_RATE_11B___2L_____MBPS=9
+export WIFI_DT_RATE_11B___2S_____MBPS=10
+export WIFI_DT_RATE_11B_5_5L_____MBPS=11
+export WIFI_DT_RATE_11B_5_5S_____MBPS=12
+export WIFI_DT_RATE_11B__11L_____MBPS=13
+export WIFI_DT_RATE_11B__11S_____MBPS=14
+export WIFI_DT_RATE_11B__XR0_025_MBPS=15
+export WIFI_DT_RATE_11B__XR0_050_MBPS=16
+export WIFI_DT_RATE_11B__XR1_____MBPS=17
+export WIFI_DT_RATE_11B__XR2_____MBPS=18
+export WIFI_DT_RATE_11B__XR3_____MBPS=19
+
+# wifi max power level for Tx continuous test
+export WIFI_POWER_LEVEL_MAX____ITEM_1=$KEY_M
+export WIFI_POWER_LEVEL_NORMAL_ITEM_2=$KEY_N
+
+#
+# WIFI path information
+#
+export WIFI_ENTRY_DIR="/sys/devices/system/wifi/wifi0"
+export WIFI_ENABLE_ENTRY="$WIFI_ENTRY_DIR/wifi_enable"
+
+
+#
+# Power state property values
+#
+export WIFI_POWER_STATE_OFF=0
+export WIFI_POWER_STATE_ON=1
+
+
+#
+# WIFI information globals
+#
+export WIFI_MAC_ADDRESS="00:00:00:00:00:00"
+
+
+#
+# WIFI Chip ID verification tool
+#
+export WIFI_BMILOADER="/sbin/bmiloader"
+export WIFI_NETIF="wlan0" 
+export WIFI_CHIP_ID="0x20000188"
+#export WIFI_RESPONSE_STRING="AR6000 Reg Code = 0x40000060"
+export WIFI_RESPONSE_STRING="WiFi driver installed successfully"
+
+
+#
+# ART environment variable
+#
+export NETIF=$WIFI_NETIF
+# select between "US" or "EU"
+export WIFI_BAND="US"
+export WIFI_FREQ="2412"
+# "1"  := Tx test
+# "0"  := Rx test
+export WIFI_ART_TEST="1"
+export WIFI_MODE="11B"
+export WIFI_DATA_RATE_INDEX=0
+export WIFI_USE_TARGET_POWER=0
+export WIFI_FORCE_ANT_A=0
+
+#
+# Wifi driver loading
+#
+export LOAD_WIFI_DRIVERS="/etc/init.d/wifi"
+export UNLOAD_WIFI_DRIVERS="/etc/init.d/wifi stop"
+
+#
+# lipc information
+#
+export WIFI_DBUS_ENTRYPOINT=com.lab126.wifi
+export POWERD_DBUS_ENTRYPOINT=com.lab126.powerd
+
+
+#
+# Timeouts to wait for success before failing a wifi power operation
+#
+export WIFI_POWER_OFF_TIMEOUT=180
+export WIFI_POWER_ON_TIMEOUT=120
+export WIFI_INFO_READY_TIMEOUT=20 
+ 
+# Minimum power level for RF test - warning if under 60%
+export WIFI_511_BATTERY_LEVEL=60 
+
+export _WIFI_HAL_INCLUDED=1
+         

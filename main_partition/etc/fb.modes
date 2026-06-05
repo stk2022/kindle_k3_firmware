@@ -1,0 +1,49 @@
+mode "600x800-0"
+# D: 0.000 MHz, H: 0.000 kHz, V: 0.000 Hz
+geometry 600 800 600 800 4 
+timings 0 0 0 0 0 0 0
+accel false
+rgba 0/0,0/0,0/0,0/0
+endmode
+
+mode "600x800-0"
+# D: 0.000 MHz, H: 0.000 kHz, V: 0.000 Hz
+geometry 600 800 600 800 8 
+timings 0 0 0 0 0 0 0
+accel false
+rgba 0/0,0/0,0/0,0/0
+endmode
+
+mode "600x706-0"
+# D: 0.000 MHz, H: 0.000 kHz, V: 0.000 Hz
+geometry 600 706 600 706 4 
+timings 0 0 0 0 0 0 0
+accel false
+rgba 0/0,0/0,0/0,0/0
+endmode
+
+mode "600x706-0"
+# D: 0.000 MHz, H: 0.000 kHz, V: 0.000 Hz
+geometry 600 706 600 706 8 
+timings 0 0 0 0 0 0 0
+accel false
+rgba 0/0,0/0,0/0,0/0
+endmode
+
+mode "800x506-0"
+# D: 0.000 MHz, H: 0.000 kHz, V: 0.000 Hz
+geometry 800 506 800 506 8 
+timings 0 0 0 0 0 0 0
+accel false
+rgba 0/0,0/0,0/0,0/0
+endmode
+                                                                                
+
+mode "800x600-0"
+# D: 0.000 MHz, H: 0.000 kHz, V: 0.000 Hz
+geometry 800 600 800 600 8
+timings 0 0 0 0 0 0 0
+accel false
+rgba 0/0,0/0,0/0,0/0
+endmode
+                                                                                

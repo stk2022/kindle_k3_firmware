@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# Wrapper script for loadAR6000.sh launcher script
+#
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_IDME_FUNCTIONS=/usr/sbin/idme_functions
+[ -f ${_IDME_FUNCTIONS} ] && . ${_IDME_FUNCTIONS}
+
+# If the board is not Luigi-based, do not attempt to load WiFi
+if ( ! is_Luigi_Platform ); then
+    msg "This board does not support WiFi; exiting script." W
+    exit 1
+fi
+
+export IMAGEPATH=/sbin
+export WORKAREA=/opt/ar6k
+export ATH_PLATFORM=SHASTA_NATIVEMMC-SDIO
+export TARGET_TYPE=AR6002
+export AR6002_REV=2
+export TARGET=AR6002
+export EEPROM=/opt/ar6k/target/AR6002/hw2.0/bin/lab126_15dBm_nodiv_WWR_CTL.bin
+
+#args=${*/stop/unloadall}
+
+args=$*
+
+if [ -n "$1" ] && [ "$1" = "stop" ]
+then
+    args=unloadall
+fi
+
+RAWMAC=`idme ? | awk '/MAC address/ { print $4 }`
+if [ -n "$RAWMAC" ]; then
+	# MAC address is set on the device, let wifi chip know about it
+	MAC=`echo $RAWMAC | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\1:\2:\3:\4:\5:\6/'`
+	# msg "WiFi Device mac = $MAC" I
+	$WORKAREA/host/support/loadAR6000.sh -i wlan0 --setmac $MAC  $args
+else
+	# A MAC address is not set on the device yet...
+	$WORKAREA/host/support/loadAR6000.sh -i wlan0 $args
+fi
+exit_value=$?
+
+msg "loadAR6000=finished, args=($args):" I
+
+
+exit $exit_value
+
+

@@ -1,0 +1,90 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_PATHS=/etc/sysconfig/paths
+[ -f ${_PATHS} ] && . ${_PATHS}
+
+usage()
+{
+	msg "usage: $0 [--loop | --fsck] [mount | umount]" W
+	exit 1
+}
+
+_LOOP_ONLY=0
+_MOUNT_FSCK=0
+
+if [ "$1" = "--loop" ]; then
+	_LOOP_ONLY=1
+	shift
+else
+	if [ "$1" = "--fsck" ]; then
+		_MOUNT_FSCK=1
+		shift
+	fi
+fi
+
+. /etc/sysconfig/mntus
+
+if [ ! -f ${MNTUS_PARAMS} ]; then
+	msg  "drive parameters not found (${MNTUS_PARAMS})" E
+	exit 127
+fi
+
+. ${MNTUS_PARAMS}
+
+case "$1" in
+	mount)
+		# create the loopback
+		losetup -o ${MNTUS_PART_OFFSET} ${MNTUS_LOOP_DEV} ${MNTUS_DEV}
+		_RES=$?
+		if [ ${_RES} -ne 0 ]; then
+			msg "loopback attach failed (${_RES})" E
+			exit ${_RES}
+		fi
+		if [ ${_LOOP_ONLY} -eq 0 ]; then
+
+			if [ ${_MOUNT_FSCK} -ne 0 ]; then
+				fsck.vfat -a -v ${MNTUS_LOOP_DEV}
+			fi
+
+			# mount the partition
+			mount ${MNTUS_MP}
+			_RES=$?
+			if [ ${_RES} -ne 0 ]; then
+				losetup -d ${MNTUS_LOOP_DEV}
+				msg "partition mount failed (${_RES})" E
+				exit ${_RES}
+			fi
+		fi
+		;;
+	umount)
+		if [ ${_LOOP_ONLY} -eq 0 ]; then
+			# unmount the partition
+			umount ${MNTUS_MP}
+			_RES=$?
+			if [ ${_RES} -ne 0 ]; then
+				msg "partition umount failed (${_RES})" E
+				exit ${_RES}
+			fi
+		fi
+
+		# detach the loop
+		# (this does not seem necessary under busybox)
+		#losetup -d ${MNTUS_LOOP_DEV} 2>/dev/null
+		#_RES=$?
+		#if [ ${_RES} -ne 0 ]; then
+		#	echo "error: loopback detach failed (${_RES})"
+		#	exit ${_RES}
+		#fi
+		;;
+	*)
+		usage
+		exit 1
+		;;
+esac
+
+exit 0
+
+

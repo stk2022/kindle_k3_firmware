@@ -1,0 +1,127 @@
+#!/bin/sh
+_FUNCTIONS=/etc/rc.d/functions
+
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+if [ "x`cat /proc/bootglobals/kernel_boot_flag`" == "x0" ] ; then
+	msg "cannot determine current kernel partition bailing out until next time" I
+	exit 3
+fi
+if [ "x`cat /proc/bootglobals/kernel_boot_flag`" == "x2" ] ; then
+	CURKER=PRIMARY
+	IFMTD=/dev/mtdblock/1
+	OFMTD=/dev/mtdblock/4
+	OFDEV=/dev/mtd/4
+else 
+	CURKER=SECONDARY
+	IFMTD=/dev/mtdblock/4
+	OFMTD=/dev/mtdblock/1
+	OFDEV=/dev/mtd/1
+fi
+CKIMAGE=/usr/bin/ckimage
+
+DELAY=30 # Adding a delay when this is called at boot time in order to speed things up
+
+check_curker_info()
+{
+	ITMP=`$CKIMAGE -vvvv $IFMTD`
+	ICKIMAGE=`echo $ITMP | sed  's/.*name=\(.*\).*header_crc=\(.*\).*size=\(.*\).*data_crc=\(.*\).*time.*/\1\2\3\4/g'`
+	I=1
+	for ITEM in $ICKIMAGE; do 
+		[ 1 -eq $I ] && INAME=$ITEM	
+		[ 2 -eq $I ] && IHCRC=$ITEM
+		[ 3 -eq $I ] && ISIZE=$ITEM
+		[ 4 -eq $I ] && IDCRC=$ITEM
+		J=$(($I+1))
+		I=$J
+	done
+	[ "x$INAME" == "x" ] && exit 2
+	msg "mtd=$IFMTD, curkername=$INAME, curkerdatacrc=$IDCRC:" I "currentkerinfo"
+	OTMP=`$CKIMAGE -vvvv $OFMTD 2> /dev/null`
+	OCKIMAGE=`echo $OTMP | sed 's/.*name=\(.*\).*header_crc=\(.*\).*size=\(.*\).*data_crc=\(.*\).*time.*/\1\2\3\4/g'`
+	I=1
+	for ITEM in $OCKIMAGE; do 
+		[ 1 -eq $I ] && ONAME=$ITEM
+		[ 2 -eq $I ] && OHCRC=$ITEM
+		[ 3 -eq $I ] && OSIZE=$ITEM
+		[ 4 -eq $I ] && ODCRC=$ITEM
+		J=$(($I+1))
+		I=$J
+	done
+	if [ "x$INAME" == "x" ]; then
+		msg "no backup kernel detected" I "nobackupker"
+	else
+		msg "mtd=$OFMTD, curkername=$ONAME, curkerdatacrc=$ODCRC:" I "backupkerinfo"
+	fi
+	if [ "x$INAME" == "x$ONAME" ]; then
+		if [ "x$IHCRC" == "x$OHCRC" ] &&  [ "x$ISIZE" == "x$OSIZE" ]  &&  [ "x$IDCRC" == "x$ODCRC" ]; then
+			return 0
+		else 
+			return 1
+		fi		
+	else
+		[ "${ONAME}" '<' "${INAME}" ] && return 2;
+		return 1
+	fi
+}
+
+perform_check()
+{
+	# Don't perform the image and related checks on prototypes or, for now,
+	# Luigi-based devices.  Some of the early protypes (ADS and Mario) didn't
+	# have valid 2nd image partitions, and Luigi-based devices aren't using
+	# NOR at all.
+	#
+	if ( is_PROTO ) || ( is_Luigi_Platform ); then
+		return $FALSE
+	else
+		return $TRUE
+	fi
+}
+
+check_kernels()
+{
+	check_curker_info
+	RES=$?
+	if [ ${RES} -eq 2 ]; then
+		msg "backup kernel is out of date - updating" I		
+		flash_unlock $OFDEV
+		dd if=$IFMTD of=$OFMTD bs=128K
+		flash_lock $OFDEV 0 -1
+
+		check_curker_info
+		RES=$?
+		if [ ${RES} -ne 0 ]; then
+			msg "backup kernel still mismatch current kernel" W		
+		else
+			msg "backup kernel is the same as current kernel" I		
+		fi
+	elif [ ${RES} -eq 1 ]; then
+		msg "backup kernel is younger than current kernel : we may be doing an OTA, bailing out" W
+	fi
+}
+
+
+case "$1" in
+
+	restart|reload|force-reload|start)
+		if [ "x`basename $0`" == "xckimage" ]; then
+			if ( perform_check ); then
+				msg "checking kernel images" I
+				check_kernels
+			else
+				msg "skipping kernel check" I
+			fi
+		fi
+		exit 0
+		;;
+	stop)
+		exit 0
+		;;
+	*)
+		msg "Usage: $0 start|restart|reload|force-reload|" W
+		exit 1
+		;;
+
+esac
+

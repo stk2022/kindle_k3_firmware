@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+rmmod g_ether 2> /dev/null

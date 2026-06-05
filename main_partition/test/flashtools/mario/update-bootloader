@@ -1,0 +1,42 @@
+#!/bin/sh
+
+_BOOTLOADER_FLASH=/dev/mtdblock/0
+_BOOTLOADER_MTD=/dev/mtd/0
+_BOOTLOADER_FILE=
+
+_HARDWARE=`awk '/Hardware/ { print $3 }' </proc/cpuinfo`
+_MARIO="Mario"
+
+_SYNC=/bin/sync
+
+if [ ${_HARDWARE} = ${_MARIO} ]; then
+
+    if [ $# != 1 ]; then
+        echo "usage: $0 <bootloader file>"
+        exit 1
+    fi
+    
+    _BOOTLOADER_FILE="$1"
+    
+    echo "flashing ${_BOOTLOADER_FILE} to ${_BOOTLOADER_FLASH}..."
+    
+    flash_unlock ${_BOOTLOADER_MTD}
+        
+    dd if=${_BOOTLOADER_FILE} of=${_BOOTLOADER_FLASH} bs=131072
+    _RES=$?
+
+    ${_SYNC}
+
+    if [ ${_RES} -eq 0 ]; then
+        echo "flash completed successfully"
+    else
+        echo "flash failed: ${_RES}"
+        _RES=2
+    fi
+
+    exit ${_RES}
+
+else
+    echo "ADS bootloader updating not supported"
+    exit 0
+fi

@@ -1,0 +1,463 @@
+#!/bin/sh
+
+# This script takes the serial number and board id as parameters
+# and writes them to the NOR.
+
+# TODO:
+#  - Add padding to serial and board id if needed
+#  - Add warning when either serial number or board ID is already set.
+#  - Add some validation of the parameters.
+
+# Exit codes.
+E_BADARGS=1    # bad parameter(s)
+E_FAILED=2    # operation failed
+E_NOCONF=3    # idme_functions not found
+
+REBOOT=0
+MUST_SYNC=0
+SHOW=0
+SINGLE_SHOW=0
+
+_IDME_FUNCTIONS=/usr/sbin/idme_functions
+{ [ -f ${_IDME_FUNCTIONS} ] && . ${_IDME_FUNCTIONS} ; } || exit $E_NOCONF
+
+usage()
+{
+    echo "usage: `basename $0` <ARGUMENTS>"
+    echo "    --serial S    Sets the serial number S"
+    echo "    --board B     Sets the board id B"
+    echo "    --panel P     Sets the panel id P"
+    echo "    --pcbsn PCB   Sets the pcb serial number PCB"
+    echo "    --config ID   Sets the pcb configuration id"
+    echo "    --accel OFFST Sets the accelerometer offset string OFFST"
+    if [ $__IS_MARIO = "no" ]; then 
+        echo "    --mac M       Sets the MAC address M "
+        echo "    --mfg ID      Sets the Manufacturer Code"
+    fi
+    echo "    ?             Shows all existing values"
+    exit $E_BADARGS
+}
+
+###### Helpers 
+
+check_partition()
+{
+    if [ "$__IS_MARIO" == "yes" ]; then
+        if [ ! -c $FNS_PARTITION ]; then
+            echo "Error: $FNS_PARTITION is missing"
+            exit $E_FAILED
+        fi
+        if [ ! -b $FNS_PARTITION_MTD ]; then
+            echo "Error: $FNS_PARTITION_MTD is missing"
+            exit $E_FAILED
+        fi
+    fi
+}
+
+clean_nor()
+{
+    dd if=/dev/zero of=${FNS_PARTITION_MTD} bs=1 count=$1 seek=$2
+    MUST_SYNC=1
+}
+
+write_nor()
+{
+    clean_nor $1 $2
+    echo -n "$3" | dd of=${FNS_PARTITION_MTD} bs=1 count=$1 seek=$2
+}
+
+read_nor()
+{
+    dd if=${FNS_PARTITION_MTD} bs=1 count=$1 skip=$2 2> /dev/null
+}
+
+
+# Software relevant stuff
+burn_serial()
+{
+    if [ ${#serial_number} != 16 ] ; then
+        echo "Error: serial number MUST be 16 characters long"
+        exit $E_BADARGS
+    fi
+    echo "Burning serial number"
+    write_nor ${SERIAL_NUM_SIZE} ${SERIAL_NUM_BASE} ${serial_number}
+    rm -f ${EINK_USID_FILE}
+}
+
+show_serial()
+{
+    sn=`read_nor ${SERIAL_NUM_SIZE} ${SERIAL_NUM_BASE}`
+    echo "${sn}"
+}
+
+burn_board()
+{
+    if [ ${#board_id} != 16 ] ; then
+        echo "Error: board id MUST be 16 characters long"
+        exit $E_BADARGS
+    fi
+    echo "Burning board id"
+    if [ "$__IS_MARIO" == "yes" ]; then
+        write_nor ${BOARD_ID_SIZE} ${BOARD_ID_BASE} ${board_id}
+    else
+        write_nor ${BOARD_ID_SIZE} ${BOARD_ID_BASE_LUIGI} ${board_id}
+    fi
+}
+
+show_board()
+{
+    if [ "$__IS_MARIO" == "yes" ]; then
+        bid=`read_nor ${BOARD_ID_SIZE} ${BOARD_ID_BASE}`
+    else
+        bid=`read_nor ${BOARD_ID_SIZE} ${BOARD_ID_BASE_LUIGI}`
+    fi    
+    echo "${bid}"
+}
+
+burn_panel()
+{
+    echo "Burning panel id"
+    write_nor ${PANEL_ID_SIZE} ${PANEL_ID_BASE} ${panel_id}
+}
+
+show_panel()
+{
+    pid=`read_nor ${PANEL_ID_SIZE} ${PANEL_ID_BASE}`
+    get_barcode_panel_id
+    
+    echo "${pid} (${BARCODE_PANEL_ID})"
+}
+
+burn_accel_offset()
+{
+    if [ ${#accel_offset} -gt 16 ] ; then
+        echo "Error: accelerometer offset string MUST be 16 characters long or less"
+        exit $E_BADARGS
+    fi
+    while [ ${#accel_offset} -lt 16 ] ; do
+        accel_offset=$accel_offset" "
+    done
+    echo "Burning accelerometer offset string"
+    write_nor ${ACCEL_OFFSET_SIZE} ${ACCEL_OFFSET_BASE} ${accel_offset}
+}
+
+show_accel_offset()
+{
+    get_accel_offset
+    echo "${ACCEL_OFFSET_STR}"
+}
+
+burn_mac_address()
+{
+    if [ ${#mac_address} != 12 ] ; then
+        echo "Error: MAC address MUST be 12 characters long"
+        exit $E_BADARGS
+    fi
+    echo "Burning MAC address"
+    write_nor ${MAC_ADDRESS_SIZE} ${MAC_ADDRESS_BASE} ${mac_address}    
+}
+
+show_mac_address()
+{
+    mac=`read_nor $MAC_ADDRESS_SIZE $MAC_ADDRESS_BASE`
+    echo "${mac}"
+}
+
+# Hardware relevant stuff
+burn_hw_signature()
+{
+    echo "Burning hw signature"
+    write_nor ${HW_SIGNATURE_SIZE} ${HW_SIGNATURE_BASE} ${HW_SIGNATURE_VALUE}
+}
+
+burn_hw_pcbsn()
+{
+    echo "Burning pcb serial number $pcd_sn"
+    write_nor ${HW_PCB_SN_SIZE} ${HW_PCB_SN_BASE} ${pcd_sn}
+}
+
+show_hw_pcb_config()
+{
+    _pcb_config=`read_nor ${HW_PCB_CONFIG_SIZE} ${HW_PCB_CONFIG_BASE}`
+    echo "${_pcb_config}"
+}
+
+burn_hw_pcb_config()
+{
+    echo "Burning PCB Config ID"
+    write_nor ${PCB_CONFIG_SIZE} ${PCB_CONFIG_BASE} "${pcb_config}"    
+}
+
+burn_manufacturer_code()
+{
+    echo "Burning manufacturer code $manuf_code"
+    write_nor ${MANUFACTURER_CODE_SIZE} ${MANUFACTURER_CODE_BASE} ${manuf_code}    
+}
+
+show_manufacturer_code()
+{
+    _manuf_code=`read_nor ${MANUFACTURER_CODE_SIZE} ${MANUFACTURER_CODE_BASE}`
+    
+    #
+    # Check to see if we have a valid manufacturer code.  If we don't, 
+    # it may be in the old location still (global moved locations), 
+    # so we check the old location, and if it contains a valid manufacturer
+    # code, we copy the old location contents to the new location in flash.
+    #
+    # FIXME - While this code (following three lines) is safe and would
+    #   not cause a problem if left in, it can and should be removed
+    #   prior to shipping (along with _PREV_MANUFACTURER_CODE_BASE constant in 
+    #   idme_functions).
+    #
+    _mac_addr=`show_mac_address`
+    if [ -n "$_mac_addr" ] && [ "$_mac_addr" != "000000000000" ] && [ "$_mac_addr" != "FFFFFFFFFFFF" ]; then
+        _manuf_code_verify=`echo -n "$_mac_addr" | md5sum | cut -b 29- | cut -c 1-4`
+        _manuf_code_tag=`echo "${_manuf_code}" | cut -b 17-`
+
+        # convert both to the same case
+        _manuf_code_verify=`printf "%x" 0x$_manuf_code_verify`
+        _manuf_code_tag=`printf "%x" 0x$_manuf_code_tag`
+
+        if [ "x$_manuf_code_tag" != "x$_manuf_code_verify" ]; then
+            # Manuf code is not correct, move value from previous location
+            _orig_manuf_code="$_manuf_code"
+            _manuf_code=`read_nor ${MANUFACTURER_CODE_SIZE} ${_PREV_MANUFACTURER_CODE_BASE}`
+            _manuf_code_tag=`echo "${_manuf_code}" | cut -b 17-`
+            # convert to the same case
+            _manuf_code_tag=`printf "%x" 0x$_manuf_code_tag`
+            if [ "x$_manuf_code_tag" != "x$_manuf_code_verify" ]; then
+                # Set back to what it was since it's not valid anyway, don't confuse user
+                _manuf_code="$_orig_manuf_code"
+            else
+                manuf_code=$_manuf_code
+                burn_manufacturer_code > /dev/null 2>&1
+            fi
+        fi
+    fi
+
+    echo "${_manuf_code}"
+}
+
+
+#
+# FIXME - is_valid_pcbsn() is a temporary routine to support moving 
+#       of system globals.  While this routine is safe and would
+#       not cause a problem if left in, it can and should be removed
+#       prior to shipping
+#
+is_valid_pcbsn()
+{
+    # Shasta EEE code designation:
+    # "SHR" - WAN/WiFi pcba
+    # "SHW" - WiFi only pcba
+    if [ -z "$1" ]; then
+        return $FALSE
+    fi
+ 
+    echo "$1" | grep "SHW" > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "$1" | grep "SHR" > /dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            # PCB SN is not correct, 
+            return $FALSE
+        fi
+    fi
+    return $TRUE
+}
+
+show_hw_pcbsn()
+{
+    psn=`read_nor ${HW_PCB_SN_SIZE} ${HW_PCB_SN_BASE}`
+
+    #
+    # Check to see if we have a valid PCB ID.  If we don't, it may be
+    # in the old location still (global moved locations), so we check the old
+    # location and if it contains a valid PCB ID for this device, we
+    # copy the old location contents to the new location.
+    #
+    # FIXME - While this code (following three lines) is safe and would
+    #   not cause a problem if left in, it can and should be removed
+    #   prior to shipping (along with _PREV_ constants in idme_functions).
+    #
+    if ( ! is_valid_pcbsn $psn ); then
+        old_psn=`read_nor ${HW_PCB_SN_SIZE} ${_PREV_HW_PCB_SN_BASE}`
+        if ( is_valid_pcbsn $old_psn ); then
+            echo "Moving PCBSN global $old_psn..."
+            pcd_sn=$old_psn
+            burn_hw_pcbsn
+            psn=$old_psn
+        fi
+    fi
+
+    echo "${psn}"
+}
+
+show_all()
+{
+    echo "serial number = `show_serial`"
+    echo "board id = `show_board`"
+    echo "pcb serial number = `show_hw_pcbsn`"
+    echo "accelerometer offset string = `show_accel_offset`"
+        
+    if [ "$__IS_MARIO" == "yes" ]; then
+        echo "panel id = `show_panel`"
+    else
+        # Wifi only exists in Platform
+        echo "MAC address  = `show_mac_address`"
+        echo "pcb config id = `show_hw_pcb_config`"
+        echo "Manufacturer Code = `show_manufacturer_code`"
+    fi
+}
+
+execute_command()
+{
+    if [ "$__IS_MARIO" == "yes" ]; then
+        flash_unlock $FNS_PARTITION >/dev/null 2>/dev/null
+        if [ ${#serial_number} != 0 ]; then burn_serial; fi
+        if [ ${#board_id} != 0 ]; then burn_board; fi
+        if [ ${#panel_id} != 0 ]; then burn_panel; fi
+        if [ ${#pcd_sn} != 0 ]; then burn_hw_pcbsn; fi
+        if [ ${#accel_offset} != 0 ]; then burn_accel_offset; fi
+        flash_lock $FNS_PARTITION -1 >/dev/null 2>/dev/null
+    else
+        if [ ${#serial_number} != 0 ]; then burn_serial; fi
+        if [ ${#board_id} != 0 ]; then burn_board; fi
+        if [ ${#panel_id} != 0 ]; then burn_panel; fi
+        if [ ${#pcd_sn} != 0 ]; then burn_hw_pcbsn; fi
+        if [ ${#accel_offset} != 0 ]; then burn_accel_offset; fi
+        if [ ${#manuf_code} != 0 ]; then burn_manufacturer_code; fi
+        if [ ${#pcb_config} != 0 ]; then burn_hw_pcb_config; fi
+        if [ ${#mac_address} != 0 ]; then burn_mac_address; fi
+    fi
+}
+
+# Script must be called with arguments.
+if [ ! "$#" -gt 0 ]; then
+    usage
+    exit $E_BADARGS
+fi
+
+while [ $# -gt 0 ]; do 
+    if [ "$__IS_MARIO" == "yes" ]; then
+        case $1 in
+        ?) shift; SHOW=1; ;;
+        --serial) shift;
+            if [ "$1" == "?" ] ;then
+                show_serial; 
+            else
+                serial_number=$1; 
+            fi
+            shift ;;
+        --board) shift; 
+            if [ "$1" == "?" ] ;then
+                show_board; 
+            else
+                board_id=$1;
+            fi
+            shift ;;
+        --panel) shift;
+            if [ "$1" == "?" ] ;then
+                show_panel; 
+            else
+                panel_id=$1;
+            fi
+            shift ;;
+        --pcbsn) shift;  
+            if [ "$1" == "?" ] ;then
+                show_hw_pcbsn;
+            else
+                pcd_sn=$1;
+            fi
+            shift ;;
+        --accel) shift;
+            if [ "$1" == "?" ] ;then
+                show_accel_offset; 
+            else
+                accel_offset=$1;
+            fi
+            shift ;;
+        *) usage;;
+        esac
+    else
+        case $1 in
+        ?) shift; SHOW=1; ;;
+        --serial) shift;
+            if [ "$1" == "?" ] ;then
+                show_serial; 
+            else
+                serial_number=$1; 
+            fi
+            shift ;;
+        --board) shift; 
+            if [ "$1" == "?" ] ;then
+                show_board; 
+            else
+                board_id=$1;
+            fi
+            shift ;;
+        --panel) shift;
+            if [ "$1" == "?" ] ;then
+                show_panel; 
+            else
+                panel_id=$1;
+            fi
+            shift ;;
+        --config) shift;
+            if [ "$1" == "?" ] ;then
+                show_hw_pcb_config;
+            else
+                pcb_config=$1;
+            fi
+            shift ;;
+        --mfg) shift;
+            if [ "$1" == "?" ] ;then
+                show_manufacturer_code;
+            else
+                manuf_code=$1;
+            fi
+            shift ;;
+        --pcbsn) shift;
+            if [ "$1" == "?" ] ;then
+                show_hw_pcbsn;
+            else
+                pcd_sn=$1;
+            fi
+            shift ;;
+        --accel) shift;
+            if [ "$1" == "?" ] ;then
+                show_accel_offset; 
+            else
+                accel_offset=$1;
+            fi
+            shift ;;
+        --mac) shift;
+            if [ "$1" == "?" ] ;then
+                show_mac_address; 
+            else
+                mac_address=$1;
+            fi
+            shift ;;
+        *) usage;;
+        esac
+    fi
+done
+
+if [ $SHOW -eq 1 ]; then
+    show_all
+    exit 0
+fi
+
+execute_command
+
+# Sync data.
+if [ ${MUST_SYNC} -eq 1 ]; then 
+    sync
+fi
+
+# Force reboot.
+if [ "x$REBOOT" = "x1" ]; then 
+    echo "Rebooting..."
+    reboot
+fi
+exit 0
+

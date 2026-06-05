@@ -1,0 +1,172 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_DISPLAY_TEXT="/usr/local/bin/java -cp /opt/amazon/ebook/lib/portability-impl.jar com.lab126.util.misc.DisplayFile"
+_GET_KEY_CODES=/usr/bin/waitforkey
+
+_KEY_CODE_HOME_MARIO=98
+_KEY_CODE_PREV_MARIO=109
+_KEY_CODE_NEXT_MARIO=124
+
+_KEY_CODE_HOME_LUIGI=102
+_KEY_CODE_PREV_LUIGI=193
+_KEY_CODE_NEXT_LUIGI=191
+
+_KEY_CODE=
+_KEY_VALU=
+
+# At the moment, if it's not Mario, it's Luigi.
+#
+if ( is_Mario_Platform ); then
+    _KEY_CODE_HOME=${_KEY_CODE_HOME_MARIO}
+    _KEY_CODE_PREV=${_KEY_CODE_PREV_MARIO}
+    _KEY_CODE_NEXT=${_KEY_CODE_NEXT_MARIO}
+else
+    _KEY_CODE_HOME=${_KEY_CODE_HOME_LUIGI}
+    _KEY_CODE_PREV=${_KEY_CODE_PREV_LUIGI}
+    _KEY_CODE_NEXT=${_KEY_CODE_NEXT_LUIGI}
+fi
+
+_OUTFILE=/tmp/.wft.out
+
+_EINK_OVERRIDE_UPD_MODE_CTRL=/sys/devices/platform/eink_fb.0/override_upd_mode
+_UPD_MODE_INIT=0          # Forces no override.
+_UPD_MODE_MU=1            # Apollo->BS: DU
+_UPD_MODE_GU=2            # Apollo->BS: GC4
+_UPD_MODE_GC=3            # Apollo->BS: GC16
+
+_EINK_PROC=/proc/eink_fb
+_EINK_UPDATE_DISPLAY=${_EINK_PROC}/update_display
+_EINK_UPDATE_DISPLAY_FULL=2
+_EINK_RESTORE_DISPLAY=15
+
+_FX_UPDATE_PART=0
+_FX_UPDATE_FULL=1
+
+update_display_full_gc16()
+{
+    echo ${_UPD_MODE_GC} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_RESTORE_DISPLAY} ${_FX_UPDATE_FULL} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}    
+}
+
+update_display_full_gc4()
+{
+    echo ${_UPD_MODE_GU} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+    echo ${_EINK_RESTORE_DISPLAY} ${_FX_UPDATE_FULL} >${_EINK_UPDATE_DISPLAY}
+    echo ${_UPD_MODE_INIT} >${_EINK_OVERRIDE_UPD_MODE_CTRL}
+}
+
+clear_screen()
+{
+    ${EIPS} -c
+}
+
+set_key_codes()
+{
+    _KEY_CODE=$1
+    _KEY_VALU=$2
+}
+
+get_key_codes()
+{
+    _KEY_CODES="`${_GET_KEY_CODES}`"
+    set_key_codes ${_KEY_CODES}
+}
+
+# Generate the test text.
+#
+echo -e \
+\<Dialog 20\>\\n\
+E-Ink Waveform Text Test 0.4\\n\
+\<Monospaced 10\>\\n\
+...........................................................................\\n\
+\\n\
+\<Monospaced 15\>\\n\
+Hit PREV on the device for a flashing GC16.\\n\
+Hit NEXT on the device for a flashing GC4.\\n\
+\\n\
+HIT HOME on the device to exit.\\n\
+\<Monospaced 10\>\\n\
+...........................................................................\\n\
+\\n\
+\<Serif-aa 18\>\\n\
+Four score and seven years ago our fathers brought forth on\\n\
+this continent, a new nation, conceived in Liberty, and\\n\
+dedicated to the proposition that all men are created equal.\\n\
+\\n\
+Now we are engaged in a great civil war, testing whether\\n\
+that nation, or any nation so conceived and so dedicated,\\n\
+can long endure. We are met on a great battle-field of that\\n\
+war. We have come to dedicate a portion of that field, as a\\n\
+final resting place for those who here gave their lives that\\n\
+that nation might live. It is altogether fitting and proper\\n\
+that we should do this.\\n\
+\\n\
+But, in a larger sense, we can not dedicate -- we can not\\n\
+consecrate -- we can not hallow -- this ground. The brave\\n\
+men, living and dead, who struggled here, have consecrated\\n\
+it, far above our poor power to add or detract. The world\\n\
+will little note, nor long remember what we say here, but it\\n\
+can never forget what they did here. It is for us the living,\\n\
+rather, to be dedicated here to the unfinished work which\\n\
+they who fought here have thus far so nobly advanced. It is\\n\
+rather for us to be here dedicated to the great task\\n\
+remaining before us -- that from these honored dead we take\\n\
+increased devotion to that cause for which they gave the last\\n\
+full measure of devotion -- that we here highly resolve that\\n\
+these dead shall not have died in vain -- that this nation,\\n\
+under God, shall have a new birth of freedom -- and that\\n\
+government of the people, by the people, for the people,\\n\
+shall not perish from the earth.\\n\
+> ${_OUTFILE}
+
+# Stop the framework, which also clears the screen, and the power daemon.
+#
+wait_framework_done
+stop_powerd
+
+# Get the test text onto the display.
+#
+${_DISPLAY_TEXT} ${_OUTFILE} 2>/dev/null >/dev/null
+
+# Loop until done.
+#
+_DONE=0
+
+while [ ${_DONE} -eq 0 ]; do
+
+    # Get the next key code and its value.
+    #
+    get_key_codes
+    
+    case "${_KEY_CODE}" in
+    
+        # PREV -> GC16
+        #
+        ${_KEY_CODE_PREV})
+            update_display_full_gc16
+        ;;
+        
+        # NEXT -> GC4
+        #
+        ${_KEY_CODE_NEXT})
+            update_display_full_gc4
+        ;;
+        
+        # HOME -> Exit
+        #
+        ${_KEY_CODE_HOME})
+            _DONE=1
+        ;;
+    
+    esac
+
+done
+
+# Eliminate the test text and clear the screen.
+#
+rm -f ${_OUTFILE}
+clear_screen

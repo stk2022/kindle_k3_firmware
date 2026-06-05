@@ -1,0 +1,91 @@
+# long int
+NUM_ITERATIONS = 10
+# long int
+NUM_PACKETS = 50
+# long int
+PACKET_SIZE = 10
+# long int
+TP_PACKET_SIZE = 10
+# long int
+TP_NUM_PACKETS = 50
+# long int
+TP_CCK_NUM_PACKETS = 50
+# hex, all = 0x7f, LSB = lower rates, higher rates
+TP_RATE_MASK = 0x4181
+# long int
+5G_SIDE_CHANNEL = 5640 
+# long int
+2G_SIDE_CHANNEL = 2412
+# hex
+# EEP_SINGLE_LOCATION =
+
+# char : 'N', 'E', 'W', 'W'
+# DUT_ORIENTATION =
+
+# char : 'N', 'E', 'S', 'W'
+# AP_ORIENTATION =
+
+# string, length = MAX_AP_DUT_TYPE_LENGTH   (128)
+DUT_ID = 0x6042
+
+# string, length = MAX_AP_DUT_TYPE_LENGTH   (128)
+# AP_ID =
+
+# long int
+# PER_THRESHOLD =
+
+# long int
+# TP_PER_THRESH_11B =
+
+# long int 
+# TP_PER_THRESH =
+
+# long int
+# PPM_MIN =
+
+# long int 
+# PPM_MAX =
+
+# long int 
+# RSSI_THRESHOLD_11A_ANT_A =
+
+# long int
+# RSSI_THRESHOLD_11B_ANT_A =
+
+# long int
+# RSSI_THRESHOLD_11A_ANT_B =
+
+# long int
+# RSSI_THRESHOLD_11B_ANT_B =
+
+# long int 
+# RSSI_THRESHOLD_11G_ANT_A =
+
+# long int
+# RSSI_THRESHOLD_11G_ANT_B =
+
+# long int
+# SET_TX_POWER =
+
+# long int
+# BEACON_TIMEOUT =
+
+# long int
+# CRC_THRESHOLD =
+
+# float
+# TP_THRESHOLD_11A =
+
+# float
+# TP_THRESHOLD_11B =
+
+# float
+# TP_THRESHOLD_11G =
+
+# string
+# MAC_ADDRESS_MIN =
+
+# string 
+# MAC_ADDRESS_MAX =
+
+

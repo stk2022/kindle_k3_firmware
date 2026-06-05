@@ -1,0 +1,262 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   power.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   05/22/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Mario platform Power HAL layer for power diagnostic scripts.  This file will
+#   define various HAL routines based on the utility used for testing
+#   the Power Management system.
+#
+#   This file contains a power HAL for the Mario platform, which includes:
+#
+#   Macros
+#       HALT_CPU                - Instruction to HALT the processor (ship mode)
+#
+#   Data Structures
+#       POWER_AUTO_MODE_LIST    - list of power modes to test in cycle (run-in) mode
+#       POWER_MODE_LIST         - list of power modes to test
+#       POWER_ACTIVE_MODES      - list of all active system power modes (cpu awake)
+#       POWER_SLEEP_MODES       - list of all system sleep power modes
+#
+#   Hal Routines
+#       device_power_state(state)       - Set device to requested power state
+#       get_power_name_from_mode_id(id) - Returns text name for power mode
+#       power_shipping_mode()           - Put device into ship mode (HALT CPU)
+#       power_hal_init(void)            - Hal initialization routine
+#       power_hal_exit(void)            - Hal teardown routine
+#
+######################################################################
+
+enable_accessory_port()
+{
+    do_local_echo "Enabling accessory port"
+    # use PMIC instead of the sys entry.
+    # in FCT test, the sys entry does not turn on the accessory
+    # port because it is not connected to any device.
+    "$DIAG_TOOL_ROOT/pmic" wor 34 8 8 0x1 > /dev/null 2>&1
+    # echo -n 1 > $ACCESSORY_PORT_ENTRY
+}
+
+disable_accessory_port()
+{
+    do_local_echo "Disabling accessory port"
+    "$DIAG_TOOL_ROOT/pmic" wor 34 8 8 0x0 > /dev/null 2>&1
+    # echo -n 0 > $ACCESSORY_PORT_ENTRY
+}
+
+
+######################################################################
+# Function:    device_power_state
+# Purpose:     Put the device into the requested power state
+# Paramters:   power_state - power state to put device in.
+#               One of:
+#                   POWER_SLEEP_WAN_OFF
+#                   POWER_SLEEP_WAN_TPH
+#                   POWER_ACTIVE_WAN_ON
+#                   POWER_ACTIVE_WAN_OFF
+#                   POWER_ACTIVE_WAN_TPH
+#
+#              status - 0 - Don't echo any status
+#                       1 - Echo status
+# Returns:     none
+# Assumptions: none
+# Side Effect: SUB_TEST_PASS is set based on result
+#               This routine will put the device to sleep.
+#               The device has been woken up upon return from this routine
+#               Enables the accessories port upon waking up
+######################################################################
+device_power_state()
+{
+    vmsg "device_power_state($1, $2)"
+
+    # Get target state to test
+    POWER_STATE="$1"
+    VERBOSE_STATUS="$2"
+    # STATE_TEXT=`get_power_name_from_mode_id $POWER_STATE`
+
+    # Put the system to sleep
+    case "$POWER_STATE" in
+        $POWER_ACTIVE_WAN_OFF | $POWER_ACTIVE_WAN_ON | $POWER_ACTIVE_WAN_TPH)
+            ;;
+
+        $POWER_SLEEP_WAN_OFF|$POWER_SLEEP_WAN_ON|$POWER_SLEEP_WAN_TPH)
+            if [ $VERBOSE_STATUS -eq 1 ]; then
+                echo "Putting system to sleep..."
+            fi
+            eval $SLEEP_SYSTEM_CMD
+
+            # Sleep disabled port, turn it back on now
+            enable_accessory_port
+            ;;
+
+        *)
+            ;;
+    esac
+}
+
+
+######################################################################
+# Function:     get_power_name_from_mode_id
+# Purpose:      Given a mode ID, return the associated name string.
+# Paramters:    Power mode.  One of:
+#                   POWER_SLEEP_WAN_OFF
+#                   POWER_SLEEP_WAN_ON
+#                   POWER_SLEEP_WAN_TPH
+#                   POWER_ACTIVE_WAN_OFF
+#                   POWER_ACTIVE_WAN_ON
+#                   POWER_ACTIVE_WAN_TPH
+#                   POWER_SLEEP
+# Returns:      none
+# Side Effects: Echo's the resulting string
+######################################################################
+get_power_name_from_mode_id()
+{
+    POWER_MODE="$1"
+    case "$POWER_MODE" in
+        $POWER_SLEEP_WAN_OFF)
+            echo "WAN Off System Sleep"
+            ;;
+        $POWER_SLEEP_WAN_ON)
+            echo "WAN On System Sleep"
+            ;;
+        $POWER_SLEEP_WAN_TPH)
+            echo "WAN TPH System Sleep"
+            ;;
+        $POWER_ACTIVE_WAN_OFF)
+            echo "Wan Off System Active"
+            ;;
+        $POWER_ACTIVE_WAN_ON)
+            echo "Wan On System Active"
+            ;;
+        $POWER_ACTIVE_WAN_TPH)
+            echo "Wan in TPH, System Active"
+            ;;
+        $POWER_SLEEP)
+            echo "System Sleep"
+            ;;
+        *)
+            echo "Error: Unknown power mode $POWER_STATE"
+            ;;
+    esac
+}
+
+
+######################################################################
+# Function:     power_shipping_mode
+# Purpose:      Put the device into shipping mode (HALT the processor)
+# Paramters:    none
+# Returns:      none
+######################################################################
+power_shipping_mode()
+{
+    `${HALT_CPU}`
+}
+
+
+######################################################################
+# Function:     power_hal_init
+# Purpose:      Hal init routine for the power hal.  It currently
+#               doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+power_hal_init()
+{
+    #
+    # Nothing to initialize for power hal
+    #
+    vmsg "power_hal_init()"
+}
+
+
+######################################################################
+# Function:     power_hal_exit
+# Purpose:      Hal cleanup exit routine for the power hal.  It currently
+#               doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+power_hal_exit()
+{
+    #
+    # Nothing to uninitialize for power hal
+    #
+    vmsg "power_hal_exit()"
+}
+
+
+# Don't include HAL more than once
+if [ "x$_POWER_HAL_INCLUDED" == "x1" ]; then
+    return 0
+fi
+
+# Wan HAL Functions
+[ -f ${_WAN_HAL_FUNCTIONS} ] && . ${_WAN_HAL_FUNCTIONS}
+
+#
+# Shipping mode macro to HALT cpu
+#
+export HALT_CPU="/etc/init.d/halt stop"
+
+
+# Acceptable current draw level for system in TPH sleep mode
+export CURRENT_DRAW_TPH_SLEEP_MAX=3
+
+# Number of seconds to sleep during TPH mode before waking and
+# checking current consumption in automatic verify sleep current mode
+export AUTO_VERIFY_TPH_SLEEP_TIME=20
+
+# If allowed to retry TPH power consumption test failures (via ENABLE_TPH_RETRY)
+#  the retry 5 times looking for a success
+export TPH_VERIFY_RETRY_MAX=5
+
+# Sleep current reading
+#
+export SLEEP_CURRENT_READ_ENTRY="/sys/devices/system/luigi_battery/luigi_battery0/battery_suspend_current_diags"
+
+# System entry for the RTC wakeup timer
+export DEVICE_RTC_WAKEUP_ENTRY="/sys/devices/platform/mxc_rtc.0/wakeup_enable"
+
+#
+# Power Modes to test
+#
+export POWER_SLEEP_WAN_OFF=0
+export POWER_SLEEP_WAN_ON=1
+export POWER_SLEEP_WAN_TPH=2
+
+export POWER_ACTIVE_WAN_ON=3
+export POWER_ACTIVE_WAN_OFF=4
+export POWER_ACTIVE_WAN_TPH=5
+export POWER_SLEEP=6
+
+export POWER_MODE_LIST="$POWER_SLEEP_WAN_OFF $POWER_SLEEP_WAN_TPH"
+export POWER_SLEEP_MODES="$POWER_SLEEP_WAN_OFF $POWER_SLEEP_WAN_TPH"
+export POWER_ACTIVE_MODES="$POWER_ACTIVE_WAN_OFF $POWER_ACTIVE_WAN_TPH $POWER_ACTIVE_WAN_ON"
+
+#
+# List of modes to test in cycle/auto mode
+#   Can't include sleep as no operator to wake device
+#
+export POWER_AUTO_MODE_LIST="$POWER_ACTIVE_MODES"
+
+
+#
+# Control entry to enable early read of gas gauge after waking from
+# sleep (to test TPH sleep current)
+#
+export TPH_SLEEP_CURRENT_READ_CONTROL_ENTRY="/sys/devices/system/luigi_battery/luigi_battery0/resume_stats"
+
+#
+# Sleep commands
+#
+export SLEEP_SYSTEM_CMD='echo "mem" > /sys/power/state'
+
+
+export _POWER_HAL_INCLUDED=1

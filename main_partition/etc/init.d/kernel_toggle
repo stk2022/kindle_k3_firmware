@@ -1,0 +1,22 @@
+#!/bin/sh
+# Toggles which kernel image to boot. 
+# Before the bootloader starts a kernel, it toggles the flag. before rebooting we should toggle it back.
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+PRIMARY_FILE=/proc/bootglobals/kernel_boot_flag
+
+case "$1" in
+    stop|start)
+        if ( ! is_Luigi_Platform ); then
+            if [ -w $PRIMARY_FILE ]; then
+                # set next boot to autoselect kernel
+                echo "0" >$PRIMARY_FILE
+            fi
+        fi
+    ;;
+    *)
+        exit 1
+    ;;
+esac

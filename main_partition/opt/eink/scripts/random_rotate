@@ -1,0 +1,128 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EINK_PROC=/proc/eink_fb
+_EINK_UPDATE_DISPLAY=${_EINK_PROC}/update_display
+_EINK_UPDATE_DISPLAY_ORIENTATION=14
+
+_FAKE_HW_TIMEOUT=/sys/devices/platform/eink_fb.0/force_hw_not_ready
+_FAKE_ROTATE=/sys/devices/platform/eink_fb.0/send_fake_rotate
+_ROTATE_LOG_FILE=/var/local/eink/rotate_log
+
+_ROTATE_PORTRAIT=0
+_ROTATE_PORTRAIT_UPSIDE_DOWN=1
+_ROTATE_LANDSCAPE=2
+_ROTATE_LANDSCAPE_UPSIDE_DOWN=3
+_ROTATE_TYPES=$((${_ROTATE_LANDSCAPE_UPSIDE_DOWN} + 1));
+
+_LOOP_DELAY=${1:-3}
+#_EINK_ROTATE=${2:-12}
+#_TIMEOUT_COUNT=${2:-12}
+
+# update_display_rotate()
+# {
+#     echo ${_EINK_UPDATE_DISPLAY_ORIENTATION} $1 >${_EINK_UPDATE_DISPLAY}
+#     update_screen_info
+# }
+
+get_rnd()
+{
+    # Assume max >= min to determine range.
+    #
+    min=$1
+    max=$2
+    let rng=$(($max - $min))
+
+    # Get a 32-bit (4-byte) random hex value from /dev/urandom, convert it to decimal,
+    # and put it in the right range for return.
+    #
+    let rnd_hex=0x`cat /dev/urandom | hexdump -n 4 | awk '/0000000/ { print $2 $3 $4 $5 }'`
+    rnd=`echo $rnd_hex`
+    let rnd=$(($rnd % $rng))
+    let rnd=$(($min + $rnd))
+    
+    _RND=$rnd
+}
+
+keep_awake()
+{
+    # Have powerd generate a fake user-input event.
+    #
+    powerd_test -i >/dev/null
+}
+
+# Ensure that we actually can do a fake rotation.
+#
+if [ -f ${_FAKE_ROTATE} ]; then
+
+    rm -f ${_ROTATE_LOG_FILE} 2>/dev/null
+    touch ${_ROTATE_LOG_FILE}
+    let count=0
+
+    # Loop forever.
+    #
+    while [ true ]; do
+    
+        # Generate a random rotation event value.
+        #
+        get_rnd ${_ROTATE_PORTRAIT} ${_ROTATE_TYPES}
+        
+        # Generate another rotation that's 90-degrees away from the first.
+        #
+        case ${_RND} in
+        
+            ${_ROTATE_PORTRAIT})
+                _BACK=${_ROTATE_LANDSCAPE_UPSIDE_DOWN}
+            ;;
+            
+            ${_ROTATE_PORTRAIT_UPSIDE_DOWN})
+                _BACK=${_ROTATE_LANDSCAPE}
+            ;;
+            
+            ${_ROTATE_LANDSCAPE})
+                _BACK=${_ROTATE_PORTRAIT_UPSIDE_DOWN}
+            ;;
+            
+            ${_ROTATE_LANDSCAPE_UPSIDE_DOWN})
+                _BACK=${_ROTATE_PORTRAIT}
+            ;;
+            
+        esac
+
+        # Fake a hardware timeout when requested.
+        #
+        #if [ $(($count % ${_TIMEOUT_COUNT})) -eq 0 ]; then
+        #    echo 1 >${_FAKE_HW_TIMEOUT}
+        #fi
+        
+        # Periodically get the eInk HAL into a potentially different orienation than
+        # what the Framework's in.
+        #
+        #if [ $(($count % ${_EINK_ROTATE})) -eq 0 ]; then
+        #    update_display_rotate ${_RND}
+        #fi
+
+        # Send both rotate events, back to back.
+        #
+        echo ${_RND}  >${_FAKE_ROTATE}
+        echo ${_BACK} >${_FAKE_ROTATE} 
+                        
+        # Prevent powerd from letting the device fall asleep.
+        #
+        keep_awake
+        
+        # Log what we did and when we did it.
+        #
+        date >> ${_ROTATE_LOG_FILE}
+        echo "rotate = ${_RND}, rotate back = ${_BACK}, count = $count" >> ${_ROTATE_LOG_FILE}
+        
+        # Count this loop and wait before starting over.
+        #
+        let count+=1
+        sleep ${_LOOP_DELAY}
+    
+    done
+
+fi

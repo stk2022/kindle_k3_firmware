@@ -1,0 +1,19 @@
+#!/bin/sh
+if [ "$ACTION" = "add" ] ; then
+	/usr/bin/lipc-send-event -r 3 com.lab126.hal usbPlugIn
+else
+	if [ "$ACTION" = "remove" ] ; then
+		/usr/bin/lipc-send-event -r 3 com.lab126.hal usbPlugOut
+	else
+		if [ "$ACTION" = "online" ] ; then
+			/usr/bin/lipc-send-event -r 3 com.lab126.hal usbConfigured
+		else
+			if [ "$ACTION" = "offline" ] ; then
+				/usr/bin/lipc-send-event -r 3 com.lab126.hal usbUnconfigured
+			fi
+		fi
+	fi
+fi
+
+exit 0
+

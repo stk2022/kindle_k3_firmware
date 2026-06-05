@@ -1,0 +1,22 @@
+#!/bin/sh
+
+PROG=$1
+if [ "$PROG" == "" ]; then
+	echo "Please specify name of the program"
+	exit 1
+fi
+
+echo "PID	NICE	SCHED"
+for PID in `ps x -T | grep $PROG | grep -v grep | awk '{print $2;}' `; do
+	T=`cat /proc/$PID/cmdline 2>/dev/null | cut -f 1 | head -n 1 `
+	P=`basename $T 2>/dev/null`
+	#echo "T=$T    P=$P"
+	if [ "$P" == "$PROG" ]; then
+		NICE=`cat /proc/$PID/stat | cut -f 19 -d ' '`
+		SCHED=`chrt -p $PID | head -n 1 | cut -f 6 -d ' '`
+
+		echo "$PID	$NICE	$SCHED"
+	fi
+
+done
+

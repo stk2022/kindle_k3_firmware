@@ -1,0 +1,185 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+# Sound HAL Functions
+[ -f ${_AUDIO_HAL_FUNCTIONS} ] && . ${_AUDIO_HAL_FUNCTIONS}
+
+#
+# PCM Tool
+#
+export PCM_TOOL_NAME="pcm"
+export APLAY_TOOL_NAME="aplay"
+export PCM_TOOL="/test/diags/factory/tools/$PCM_TOOL_NAME"
+export APLAY_TOOL="/usr/bin/$APLAY_TOOL_NAME"
+export GST_LAUNCH_TOOL_NAME="gst-launch"
+export GST_LAUNCH_TOOL="/usr/bin/$GST_LAUNCH_TOOL_NAME"
+
+
+# Message to sync external audio test tool
+export AUTOMATED_AUDIO_SYNC_MESSAGE="Starting audio sample for automated tester..."
+
+          
+do_wait_audio_sample_start()
+{
+    case "$AUDIO_PLAY_METHOD" in
+        1 | 2 | 3)
+            _proc_name="$PCM_TOOL_NAME"
+            ;;
+        *)
+            _proc_name="$APLAY_TOOL_NAME"
+            ;;
+    esac
+
+    # Wait for tool to start
+    PLAYING=0
+    while [ $PLAYING -eq 0 ]; do
+        process_running "$_proc_name" > /dev/null 2>&1
+        RETVAL=$?
+        if [ $RETVAL -eq 1 ]; then
+            PLAYING=1
+        fi
+    done
+}
+
+
+do_wait_audio_sample_completion()
+{
+    case "$AUDIO_PLAY_METHOD" in
+        1 | 2 | 3)
+            _proc_name="$PCM_TOOL_NAME"
+            ;;
+        *)
+            _proc_name="$APLAY_TOOL_NAME"
+            ;;
+    esac
+    # Wait for audio to stop
+    PLAYING=1
+    while [ $PLAYING -eq 1 ]; do
+        process_running "$_proc_name"> /dev/null 2>&1
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            PLAYING=0
+        fi
+    done
+}
+
+
+
+
+do_play_sound()
+{
+    # NOTE: the new pcm does not exit when the cpu is busy.  It just retries
+    # to fix the audio Left and Right  head set and speaker test.
+    # it does not need to change the priority anymore.
+    # And it does not need to be restarted.
+    # this new fix is needed to fix the Audio Left and Right test.
+    # when the pcm is launch, the -1 and -2 options do not work so the register
+    # 2, 3, 10 and 11 needed to be modified to mute the left or right channel.
+    # Sometime the old pcm gets errors and exit, and the playsound restarts it again
+    # causing some hiccups and channel switching problem.
+    case "$AUDIO_PLAY_METHOD" in
+        1)
+            # nice -n -19 "$PCM_TOOL" -c2 -1 440 -2 0 > /dev/null 2>&1 &
+            # new pcm tool does not take the -1 and -2 arguments
+if ( is_Shasta ); then
+            "$PCM_TOOL" -c2  &
+else
+            "$PCM_TOOL" -c2 -r15000 -f440 &
+fi
+            ;;
+
+        2)
+            # nice -n -19 "$PCM_TOOL" -c2 -1 0 -2 440 > /dev/null 2>&1 &
+if ( is_Shasta ); then
+            "$PCM_TOOL" -c2 &
+else
+            "$PCM_TOOL" -c2 -r15000 -f440 &
+fi
+            ;;
+        3)
+if ( is_Shasta ); then
+            "$PCM_TOOL" -c2  > /dev/null 2>&1 &
+else
+            "$PCM_TOOL" -c2 -r15000 -f440 > /dev/null 2>&1 &
+fi
+            ;;
+
+        4)
+            # Automated Audio Tester case
+            echo "$AUTOMATED_AUDIO_SYNC_MESSAGE"
+            echo "Executing: nice -n -19 $APLAY_TOOL -B 1200000 ${AUDIO_SND_FILES_ROOT}/mls_wav.wav"
+            nice -n -19 "$APLAY_TOOL" -B 1200000 "${AUDIO_SND_FILES_ROOT}/mls_wav.wav" > /dev/null 2>&1 &
+            ;;
+
+        *)
+            echo "Invalid case option $AUDIO_PLAY_METHOD in do_play_sound()"
+            ;;
+    esac
+}
+
+
+
+############################################################################
+
+
+
+VOLUME="$1"
+CHANNELS="$2"
+
+if [ -z "$VOLUME" ]; then
+    VOLUME=$DEFAULT_VOLUME
+    echo "playsound set default volume = $VOLUME"
+fi
+
+if [ -z "$CHANNELS" ]; then
+    CHANNELS=$CHANNEL_ALL
+    echo "playsound set default channels = $CHANNELS"
+fi
+
+#
+# If 1, will repeat the sound sample until cancelled
+#
+REPEAT_SAMPLE=1
+
+case "$CHANNELS" in
+    $CHANNEL_HP_LEFT | $CHANNEL_SPEAKER_LEFT)
+        export AUDIO_PLAY_METHOD=1
+        ;;
+    $CHANNEL_HP_RIGHT | $CHANNEL_SPEAKER_RIGHT)
+        export AUDIO_PLAY_METHOD=2
+        ;;
+    $CHANNEL_ALL_SPEAKER)
+        # Automated test case - hack - only one that uses CHANNEL_ALL_SPEAKER
+        REPEAT_SAMPLE=0
+        export AUDIO_PLAY_METHOD=4
+        ;;
+    *)
+        export AUDIO_PLAY_METHOD=3
+        ;;
+esac
+
+
+SOUND_DONE=0
+while [ $SOUND_DONE -ne 1 ]; do
+    # Play the sound file
+    do_play_sound
+    do_wait_audio_sample_start
+    audio_set_parms $CHANNELS $VOLUME
+
+    if [ $AUDIO_PLAY_METHOD -eq 4 ]; then
+        # Automated sample plays just once
+        SOUND_DONE=1;
+    else
+        # Watch for the pcm process to die.
+        do_wait_audio_sample_completion
+
+        # If we're here, the pcm process stopped.  We'll restart the while loop,
+        # which will restart the sound playing
+    fi
+done
+

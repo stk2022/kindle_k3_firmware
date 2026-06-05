@@ -1,0 +1,67 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EINK_PROC=/proc/eink_fb
+_EINK_RAM=${_EINK_PROC}/eink_ram
+
+_EINK_CTRL=/sys/devices/platform/eink_fb.0
+_EINK_RAM_SELECT=${_EINK_CTRL}/eink_ram_select
+_EINK_FLASH_MODE=${_EINK_CTRL}/flash_mode
+
+_SDRAM_SIZE=1048576
+_SDRAM_BANK=${1:-0}
+
+_TEST_DATA=/dev/urandom
+_TEST_FILE=/mnt/us/test_${_SDRAM_BANK}.bin
+_EINK_FILE=/mnt/us/eink_${_SDRAM_BANK}.bin
+
+_TEST_SUM=
+_EINK_SUM=
+
+# Stop the Framework if it's still running.
+#
+echo "Stopping the Framework."
+if ( is_Framework_Running ); then
+    wait_framework_done
+fi
+
+# Attempt to use the passed-in bank.
+#
+echo ${_SDRAM_BANK} >${_EINK_RAM_SELECT}
+_SDRAM_BANK=`cat ${_EINK_RAM_SELECT}`
+
+# Create test file from test data.
+#
+echo "Creating test file."
+dd if=${_TEST_DATA} of=${_TEST_FILE} count=1 bs=${_SDRAM_SIZE}
+
+# Send test file to eInk RAM.
+#
+echo "Sending test file to eInk RAM bank ${_SDRAM_BANK}."
+dd if=${_TEST_FILE} of=${_EINK_RAM} count=1 bs=${_SDRAM_SIZE}
+
+# Create file from eInk RAM.
+#
+echo "Creating file from eInk RAM bank ${_SDRAM_BANK}."
+dd if=${_EINK_RAM} of=${_EINK_FILE} count=1 bs=${_SDRAM_SIZE}
+
+# Checksum and compare test and eInk files.
+#
+echo "Comparing test and eInk files."
+
+_TEST_SUM=`md5sum ${_TEST_FILE} | awk '{ print $1 }'`
+_EINK_SUM=`md5sum ${_EINK_FILE} | awk '{ print $1 }'`
+
+echo "Test MD5 is ${_TEST_SUM}."
+echo "SRAM MD5 is ${_EINK_SUM}."
+
+if [ "${_TEST_SUM}" = "${_EINK_SUM}" ]; then
+    echo "PASS:  SDRAM and test data match."
+    rm -f ${_TEST_FILE}
+    rm -f ${_EINK_FILE}
+else
+    echo "FAIL:  SDRAM and test data do NOT match."
+    echo "       See ${_TEST_FILE} and ${_EINK_FILE}."
+fi

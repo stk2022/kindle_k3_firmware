@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+lipc-send-event -r 3 -d 2 com.lab126.hal usbUnconfigured

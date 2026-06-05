@@ -1,0 +1,15 @@
+# /mnt/us partition and filesystem definitions
+
+_ROOT=/etc/sysconfig/root
+[ -f $_ROOT ] && . $_ROOT
+
+# device definitions
+MNTUS_DEV=/dev/${BLKROOT_DEV}p4
+MNTUS_LOOP_DEV=/dev/loop/0
+
+# filesystem definitions
+MNTUS_MP=/mnt/base-us
+
+MNTUS_LABEL="Kindle"
+
+# MNTUS_PARAMS is defined in paths  because it moved to var/local/

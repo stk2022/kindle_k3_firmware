@@ -1,0 +1,356 @@
+#############################################################################
+#
+#  File:   diags_version
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   09/16/08
+#
+#  Copyright (C) 2005-2010 Amazon Technologies
+#
+#  Description:
+#
+#      Contains the System Diagnostic's version number.
+#
+#  Version Change Information
+#
+#   4.31    Modified Operator Test Suite per factory request.  This included:
+#           1.  Remove all tests except Video, LED, Buttons, Keyboard,
+#               5-way, Audio, WiFi and WAN; 
+#           2.  When test fails, record failure and move on to next test
+#           3.  At the end of "Operator Test Suite", if it there are failed items,
+#               a "Re-test failed item?" window is requested. If the operator 
+#               input a YES, then re-test the failed items
+#           4.  Add "MSID, MAC Address" and "Manufacturer Code" information in 
+#               device_info.txt
+#           NOTE that this version does not yet have a separate log file for
+#               operator test suite.  I will add this feature later once working.
+#
+#   4.32    Simplified audio hal for Shasta, added error checking code for cases
+#           when audio driver fails, got audio test suite working again.
+#
+#   4.33    Added battery vendor information to device_info.txt file.  Verify
+#           both battery model number and vendor information is contained in
+#           the device_info.txt file that's created upon disabling diagnostics.
+#
+#   4.34    Generate a separate logfile for the operator test suite results.
+#           Upon disabling diagnostics, suite_results.0.txt should exist and
+#           contain results from the operator test suite.
+#
+#   4.35    Modified incorrect warning message when running WiFi test fail.
+#
+#   4.36    Changed how volume control is done on Shasta.  All audio-based
+#           tests should be verified.
+#
+#   4.37    Mask out WAN interrupt line from WFO.
+#           Use RTC instead of TM99 to wake up the device from the FCT test.
+#           Only test this SSP software version that does not use TM99 to 
+#           wake up the device.
+#
+#   4.38    Using ART to turn on Wifi and put it to sleep mode in FCT SSP test
+#           WHen testing manually, in the FCT test, after ART is loaded,
+#           measure the Wifi ON V & I, then select d) to enable sleep mode
+#           before measuring V & I.  Select q) to quit and return to normal
+#           FCT test.
+#
+#   4.39    update code/test/verify for Ghosting test on Turing/Nell devices
+#
+#   4.40    Maximum volume (0db) was left out of the conversion table, leaving
+#           true MAX volume unobtainable.  Expanded the conversion table to
+#           include it.  Audio should be re-tested based on this change.
+#
+#           Fixed problem with slow headset detection in audio functional test.
+#
+#           Accessories port is enabled at start of diagnostics.  SSP station
+#           needs to verify it sees power on port.
+#
+#   4.41    Changed how the codec is getting shut down to fix a problem with
+#           device making noise after codec was supposedly shut down.
+#           Also increased default volume used in audio tests for Shasta and WFO
+#           to make it loud enough to hear on factory floor.
+#
+#   4.42    Changed volume range so that only 98-100 get maximum volume, removed
+#           extra setting of channels and volume around run mode tests that
+#           use audio.
+#
+#   4.43    Shut off the audio codec after and between each audio test.
+#
+#   4.44    Modified operator test suite to no longer generate failure screens
+#           between sub-tests.
+#
+#   4.45    Modifi the WIFI test fail when the Wifi chip fail to respond and
+#           do not fail the good chip
+#
+#   4.46    Changed audio_stop_sound() to not call the do_audio_off() routine
+#           that hits the codec directly.  All audio-based tests need to be
+#           verified.  If operator indicates any audio test failed, the codec 
+#           register contents will be dumped to a file in the diagnostic logs 
+#           directory on the user store.
+#
+#   4.47    Removed pruning off of waveform filelist to V110 waveforms only,
+#           allowing waveform updating for V220 panels to work
+#
+#   4.48    Ghosting test improvements
+#
+#   4.49    Changed TTS speech speed to be "normal" speed.
+#
+#   4.50    Removing the Wifi sleep mode from FCT for now.  Will re - enable it
+#           later to test.
+#           Remove the RTC wakeup feature from FCT test
+#           because it does not work reliable.
+#
+#   4.51    Don't display microphone tests unless unit has one.
+#
+#   4.52    Enabled panel ID vs. waveform checking in Shasta and WFO
+#
+#   4.53    Changed audio stop code to completley power off the codec after
+#           pcm audio tool is killed.   All audio-related tests should be 
+#           verified.
+#
+#   4.54    Remove the WAN interrupt mask from Wifi only fct test.
+#           It causes the WFO device to wake up automatically on the 
+#           bare board.
+#
+#   4.55    The audio codec was being left on after running any of the
+#           audio FATP tests due to a bug in the tool that plays the sound.
+#           Fixed the bug in the tool and removed the workaround in diagnostic
+#           code that manually turned off the codec after each test.
+#
+#   4.56    Fixed a problem with the case when a panel ID cannot be read from
+#           a Shasta/WFO display.   Video diagnostics should be 
+#           retested/verified.
+#
+#   4.57    Ghosting test improvements
+#
+#   4.58    Power diagnostic screen no longer draws twice.  The waveform vs.
+#           panel id verification test is now disabled on Shasta and WFO devices
+#           that are EVT or older devices.
+#
+#   4.59    Updated the waveform flasher to work with Shasta DVT
+#
+#   4.60    Fixed "display_usb_plugin_request" screen missing in LED test
+#
+#   4.61    Made WAN power code more robust to catch WAN failures earlier.
+#
+#   4.62    Fix the command helper to help debugging the FCT test on the
+#           SSP fixture.
+#
+#   4.63    1) If lipc call to startWan returns an error, retry several times
+#           as it's likely wand is just not completely ready yet (timeout
+#           delays in lipc causing wand to take longer to ready itself).
+#           
+#           2) Fixed a bug that was causing wand not to get launched if the PCBA
+#           was not set properly for a Shasta.
+#       
+#           3) Changed code to get serial number from device to use idme 
+#               instead of /proc/usid entry because the proc entry is not 
+#               updated without a reboot.
+#
+#   4.64    Worked around bug in TTS that was affecting the TTS certification 
+#           test (bug SHA-3025)
+#
+#   4.65    Three separate fixes for the factory DVT1 build:
+#           1)  Fixed race condition in Mic test caused by inline headset 
+#               detection method not waiting for sound driver to close prior
+#               to setting up codec.
+#
+#           2)  Fixed issue with headset volume doing right/left channel 
+#               separation caused by do_audio_off() routine setting those
+#               registers to 0x17A instead of to 0x160.
+#
+#           3)  Added extra code to wait for wand to ready itself in the case
+#               of running the 511 test shortly after boot (a lipc bug is
+#               causing wand to take much longer to ready, causing 511 test
+#               problems.
+#
+#   4.66    Changed video_vcom_fct_test() to use a new method supported by EINK
+#           driver to allow for the EINK power rails to be left on (tells EINK
+#           driver to NOT go to sleep), which allows the SSP station to be able
+#           to measure the voltages without EINK driver powering rail off.
+#
+#   4.67    1) enable_headphones() now sets the OUT1 volumes to mute to allow
+#           proper channel separation for the headphones
+#           
+#           2) Audio is now preflighted to assure proper support is available
+#           before making audio tests/menu's available.
+#
+#   4.68    Restructured diagnostic UI / menus to be more efficient for the
+#           production line process.
+#
+#   4.69    Removed NellSL support.
+#
+#   4.70    1) Changed mute value for headphone gain from 0x160 to 0x100
+#           2) Fixed bug in manufacturer code verification
+#
+#   4.71    1)  Fixed "Fail to run "audio test" on Turing WW device in platform
+#               with Mario build"
+#    	     2) Fix un-clear "Error" message, due to wrong enviroment variable
+#               setting with Shasta build.
+#    	     3) Add routine do_speaker_test().
+#    	     4) Fix "can not stop playsound" bug.
+#    	     5) Bypass "balance check: on Mario device.
+#    	     6) Re-mapping range from 0-100 to 0-14 on Marion device.
+#            modify audio_diag.sh for tuning volume. 
+#            modify audio_diag.sh to remove "sh:0 unknown operand" message
+#            modify playsound to eliminate ticking noise for Mario devices
+#
+#   4.72    Movinand test now detects when diags has been previously disabled 
+#           and puts up a "test not valid" screen if executed after diags has 
+#           been disabled and then re-enabled.
+#
+#   4.73    Fixed bug in manufacturer code verification where match would fail if
+#           code was given in all caps due to case sensitivity compare 
+#           bug (SHA-3673).
+#
+#   4.74    1) Fixed underrun bug in automated audio test.
+#           2) Moved WiFi and Audio tests to top-most menu
+#           3) Assigned menu item key "F" to the FCT test   
+#
+#   4.75    Added Wifi ART host AP emulation test for Wifi Shasta to Shasta
+#           factory test.  One device runs this mode to emulate the host AP.
+#           To run, select N) C) P) U)
+#           This mode is needed to emulate the AP host to verify the functionality
+#           of the Wifi test only.  It does not duplicate the exact timing from 
+#           test with the chamber.
+#
+#           Move the WIFI ART factory test to the top level to save test time
+#           on the Wifi chamber.
+#           It takes about 30 secs to go through the selection N) C) P) Q).
+#           To run, select Y) WIFI ART.
+#
+#   4.76    Fixed WAN diag failure case if SIMM was swapped / replaced
+#
+#   4.77    Moved WAN 511 test to top menu, removed WAN ART from Misc menu.
+#
+#   4.79    Enable WIFI deep sleep mode in FCT test.  Only need to put the
+#           Wifi chip to deep sleep mode and do not need to turn off
+#           Wifi after that. This code also need changes from the atheros
+#           art test. 
+#       
+#           Set WAN to OFF by default.  Remove WAN measurement from FCT test.
+#           Both the Shasta with WAN and WFO run the same code sequence now.
+#           Need to make sync with the SSP host software as well.
+#
+#           Move the code to mask out the charger interrupt from the external patch
+#           to the FCT test.  This would disable the LOBATH interrupt from Atlas
+#           so the device can be put to sleep and ship mode correctly.
+#           Also restore the LOBATH interrupt when system start up, just in case
+#           it is not restored accross reboot after the FCT test disable it.
+#
+#   4.80    Added a "Battery Capacity Adjuster" diagnostic for adjusting
+#           the battery level to acceptable ship level.
+#
+#   4.81    1) Changed how headphone channel separation is done to fix SHA-1714.
+#           2) Fixed volume stepping functions during audio tests
+#
+#   4.82    Sped up test loading time by rearranging include files and ordering.
+#           This change effects every test.  Each test must be reverified.
+#
+#   4.83    Fixed bug in function to determine if diagnostics has been previously
+#           disabled.
+#
+#   4.84    Check battery level before running 511 test and if it's less than 60%,
+#           put up a warning dialog informing operator of low battery condition and
+#           asking operator if they want to continue with the 511 test or abort test.
+#
+#   4.85    Fix the Wifi power on/off hang problem.  Change the check for 
+#           Wifi chip alive using bmiloader.
+#
+#   4.86    Made the run-in enable menu items hard-coded so that Shasta and WFO
+#           are identical with respects to menu item keys in run-in test.
+#
+#   4.87    Fix the Audio automation test hang problem.
+#
+#   4.88    Fixed bug in movinand power hog piece, added debug menu to aid in
+#           power hog development and debugging (disabled by default), removed 
+#           duplicate code from the run_modes hal.
+#
+#   4.89    Disabled requiring 60% battery capacity to do 511 test.
+#
+#   4.90    Fix TTS test hang.
+#
+#   4.91    Fix a case where exiting the "Adjust Battery Level" diagnostic 
+#           prematurely causes a false-failure on a subsequent execution 
+#           of the gas gauge diagnostic.  This is not a case that would 
+#           get hit in factory (first failure causes removal from line),
+#           but it is a bug with a very low-risk fix.
+#
+#   4.92    Fix the pcm tool to recover from buffer underun and allow
+#           the run in test to continue
+#
+#   4.93    Change Gas Gauge test to use 'R' instead of 'space bar' to refresh
+#           the value because space bar does not work from serial port.
+#
+#   4.94    Fixed case where first failure of a diagnostic test can cause a
+#           false failure on a subsequent test.
+#
+#   4.95    Increased aplay's buffer size to be large enough to hold the
+#           entire automated audio test's "mls_wav.wav" wave file.  Made
+#           the automated audio test wait for sound to finish playing before
+#           redrawing menu and allowing operator to run another test.
+#
+#   4.96    Get the pcb id through idme instead of the system proc entry, now
+#           the pcb id gets echo'ed out properly during the FCT test.
+#
+#   4.97    Added Vodafone Peer type
+#
+#   4.98    Added "Verify WAN TPH Sleep Current" menu item to Power diag
+#
+#   4.99    Wifi test improvement.  It only change the way WIFI ART
+#           calculate PASS/FAIL criteria.
+#
+#   5.00    Optimized boot time into diagnostics
+#
+#   5.01    Removed external execution hook in FCT
+#
+#   5.02    In FCT test, stop Wifi before putting the device to sleep mode.
+#
+#   5.03    Display LMD value in gas gauge diagnostic in (mAH), 
+#           added measuring units to other values displayed in gas gauge diagnostic.
+#           Enable the accessory port upon waking up from sleep.
+#
+#   5.04    Fixed race condition in un_export_usb_volume()
+#
+#   5.05    Use the new sys entry battery_current_diags to get higher resolution
+#           then battery_current to display the battery current in gasgauge
+#
+#   5.06    Fix from version 5.04 caused other areas to break around charger
+#           behavior due to OTG driver no longer being installed after modprobe -r
+#           of g_file_storage.  Now removing ONLY the g_file_storage, not all
+#           drivers that it relies on.
+#
+#   5.07    Display Gasgauge current draw with decimal point
+#
+#   5.08    Use PMIC instead of the sys entry to turn on the accessory port
+#           because in FCT test, it does not have any accessory device connected
+#           to the port
+#
+#   5.09    Display Gasgauge battery suspend current in high resolution mode
+#           Using registry to validate the battery ID
+#
+#   5.10    Rolled back the race condition fix for USB
+#
+#   5.11    Fixed a bug in the TTS certification test where it would fail
+#           in some cases if audioserver had not fully booted before 
+#           diagnostics tries to use lipc to send it messages.
+#
+#   5.12    Add delay between Wifi on and Wifi off in WIFI test
+#
+#   5.13    Fixed problem where VCOM wasn't being driven due to Papyrus
+#           falling asleep (recent recoupling of ISIS and Papyrus in 
+#           EINK driver allowed Papyrus to fall asleep in diags 
+#           implementation, causing VCOM to not get driven).
+#
+#   5.14    Audio test during run-in is now disabled by default for Shasta
+#           and WFO.
+#
+#   5.15    Don't enable VCOM in FCT test until POST WAN measurement.
+#
+#   5.16    Disable VCOM prior to sleep test in FCT test, and don't enable
+#           VCOM in FCT test until POST WAN measurement for WFO.
+#
+#   5.17    Add _battery_model="170-1032-01"
+#
+#############################################################################
+
+export DIAGNOSTICS_VERSION="5.17"

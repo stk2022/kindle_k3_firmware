@@ -1,0 +1,441 @@
+#!/bin/sh
+
+export PATH=/usr/sbin:${PATH}
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EIPUTS=/usr/sbin/eiputs
+[ -f ${_EIPUTS} ] && . ${_EIPUTS}
+
+# proc file location
+_EINK_PROC=/proc/eink_fb
+AUO_CMD_WRITE=/proc/eink_fb/auo_cmd_write
+AUO_CMD_READ=/proc/eink_fb/auo_cmd_read
+_EINK_UPDATE_DISPLAY=${_EINK_PROC}/update_display
+
+# sysfs file locations
+FLASHING_UPDATE_MODE=/sys/devices/platform/eink_fb.0/auo_flashing_update_mode
+NON_FLASHING_UPDATE_MODE=/sys/devices/platform/eink_fb.0/auo_nonflashing_update_mode
+AUTO_MODE=/sys/devices/platform/eink_fb.0/auo_auto_mode
+
+# Update display params
+_EINK_UPDATE_DISPLAY_AREA=3
+_FX_UPDATE_PART=0
+_FX_UPDATE_FULL=1
+_FX_UPDATE_FAST=2
+_FX_UPDATE_SLOW=3
+
+_FX_AREA_UPDATE_FLASH=20
+_FX_AREA_UPDATE_INVERT=21
+
+# Update Modes
+FOUR_BIT_FLASH=0x0000
+FOUR_BIT_NONFLASH=0x1000
+TWO_BIT_FLASH=0x3000
+TWO_BIT_NONFLASH=0x2000
+ONE_BIT_NONFLASH=0x4000
+
+# Auto Modes
+NO_AUTO_MODE=0
+SW_AUTO_MODE=1
+HW_AUTO_MODE=2
+
+# Flash Type
+FLASH_TYPE=0
+NON_FLASH_TYPE=1
+UPDATE_NO_DISPLAY=2
+
+# Pattern Type
+ONE_BIT_PATTERN=256
+TWO_BIT_PATTERN=257
+FOUR_BIT_PATTERN=258
+EIGHT_BIT_PATTERN=259
+
+# Utility functions
+
+get_rnd()
+{
+    # Assume max >= min to determine range.
+    #
+    min=$1
+    max=$2
+    let rng=$(($max - $min))
+
+    # Get a 32-bit (4-byte) random hex value from /dev/urandom, convert it to decimal,
+    # and put it in the right range for return.
+    #
+    let rnd_hex=0x`cat /dev/urandom | hexdump -n 4 | awk '/0000000/ { print $2 $3 $4 $5 }'`
+    rnd=`echo $rnd_hex`
+    let rnd=$(($rnd % $rng))
+    let rnd=$(($min + $rnd))
+    
+    _RND=$rnd
+}
+
+clear_screen()
+{
+    ${EIPS} -c
+}
+
+display_pattern()
+{
+    type=$1
+    pattern_flash=$2
+
+    if [ $pattern_flash -eq $UPDATE_NO_DISPLAY ]; then
+        eips -n -p $type
+    elif [ $pattern_flash -eq $FLASH_TYPE ]; then
+        eips -f -p $type
+    else
+        eips -p $type
+    fi
+}
+
+change_update_mode()
+{
+    auto=$1
+    mode=$2
+    flash=$3
+
+    if [ $auto -eq $NO_AUTO_MODE ]; then
+        echo $NO_AUTO_MODE > $AUTO_MODE
+        if [ $flash -eq $FLASH_TYPE ]; then
+            echo $mode > $FLASHING_UPDATE_MODE
+        elif [ $flash -eq $NON_FLASH_TYPE ]; then
+            echo $mode > $NON_FLASHING_UPDATE_MODE
+        else
+            echo "Invalid flash type"
+        fi
+    else
+        echo $auto > $AUTO_MODE
+    fi
+}
+
+show_cursor()
+{
+    position=$1
+    show=$2
+    cursor_width=500
+    cursor_height=20
+    x1=50
+    y1=`expr $cursor_height * $position`
+    x2=`expr $x1 + $cursor_width`
+    y2=`expr $y1 + $cursor_height`
+    
+    if [ $show -eq 1 ]; then
+        # fill with black
+        ${EIPS} -n -p 255
+    else
+        # fill with white
+        ${EIPS} -n -p 0
+    fi
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 >${_EINK_UPDATE_DISPLAY}
+}
+# End of Utility functions
+
+# Test functions
+
+full_screen_pattern()
+{
+    auto_mode=$1
+    update_mode=$2
+    pattern_type=$3
+    flash_type=$4
+
+    clear_screen
+    
+    change_update_mode $auto_mode $update_mode $flash_type
+
+    display_pattern $pattern_type $flash_type
+}
+
+area_update_pattern()
+{
+    auto_mode=$1
+    update_mode=$2
+    pattern_type=$3
+    flash_type=$4
+    update_type1=${_FX_DISPLAY_FAST}
+
+    clear_screen
+    
+    change_update_mode $auto_mode $update_mode $flash_type
+
+    # Fill the framebuffer with eips pattern, dont update display
+    display_pattern $pattern_type $UPDATE_NO_DISPLAY
+
+    # Determine update type based on $flash_type
+    case ${flash_type} in
+
+        ${FLASH_TYPE})
+            update_type1=${_FX_UPDATE_FULL}
+        ;;
+
+        ${NON_FLASH_TYPE})
+            update_type1=${_FX_UPDATE_PART}
+        ;;
+    esac
+
+    # Uncover a random area in the top-left quadrant of the screen.
+    #
+    let x1=0
+    let x2=${SCREEN_X_RES}/2
+    let y1=0
+    let y2=${SCREEN_Y_RES}/2
+    
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Uncover a random area in the top-right quadrant of the screen.
+    #
+    let x1=${SCREEN_X_RES}/2
+    let x2=${SCREEN_X_RES}
+    let y1=0
+    let y2=${SCREEN_Y_RES}/2
+
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Uncover a random area in the bottom-left quadrant of the screen.
+    #
+    let x1=0
+    let x2=${SCREEN_X_RES}/2
+    let y1=${SCREEN_Y_RES}/2
+    let y2=${SCREEN_Y_RES}
+    
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+    
+    # Uncover a random area in the bottom-right quadrant of the screen.
+    #
+    let x1=${SCREEN_X_RES}/2
+    let x2=${SCREEN_X_RES}
+    let y1=${SCREEN_Y_RES}/2
+    let y2=${SCREEN_Y_RES}
+    
+    get_rnd $x1 $x2; let x2=${_RND}
+    get_rnd $y1 $y2; let y2=${_RND}
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 $update_type1 >${_EINK_UPDATE_DISPLAY}
+}
+
+cursor_move() 
+{
+    auto_mode=${NO_AUTO_MODE}
+    update_mode=$1
+    flash_type=${NON_FLASH_TYPE}
+    lines="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30"
+    lines2="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15"
+
+    clear_screen
+    
+    change_update_mode $auto_mode $update_mode $flash_type
+
+    # slow moving cursor
+    for i in $lines
+    do
+        show_cursor $i 1
+        sleep 1
+        show_cursor $i 0
+    done
+
+    clear_screen
+
+    # fast moving cursor
+    for k in $lines
+    do
+        show_cursor $k 1
+
+        # simulating sleep
+        j=0
+        for i in $lines2
+        do
+          j=`expr $j * 7`
+        done
+        show_cursor $k 0
+    done
+}
+# End of Test functions
+
+show_menu()
+{
+    clear_screen
+ 
+    # start at the top of the screen
+    puts_init
+    export EI_ROW=1
+
+    puts -b "~~~~ Menu ~~~~"
+    puts -b " "
+    puts -b "1)  Full screen 4 bit flashing update"
+    puts -b "2)  Full screen 4 bit non-flashing update"
+    puts -b "3)  Full screen 2 bit flashing update"
+    puts -b "4)  Full screen 2 bit non-flashing update"
+    puts -b "5)  Full screen 1 bit non-flashing update"
+    puts -b "6)  Full screen Auto Mode flashing update"
+    puts -b "    (4-bit gray level data)"
+    puts -b "7)  Full screen Auto Mode non-flashing update"
+    puts -b "    (4-bit gray level data)"
+    puts -b "8)  Full screen Auto Mode flashing update"
+    puts -b "    (2-bit gray level data)"
+    puts -b "9)  Full screen Auto Mode non-flashing update"
+    puts -b "    (2-bit gray level data)"
+    puts -b "10) Full screen Auto Mode non-flashing update"
+    puts -b "    (1-bit gray level data)"
+    puts -b "11) Area update 4 bit flashing"
+    puts -b "12) Area update 4 bit non-flashing"
+    puts -b "13) Area update 2 bit flashing"
+    puts -b "14) Area update 2 bit non-flashing"
+    puts -b "15) Area update 1 bit non-flashing"
+    puts -b "16) Area update Auto mode flashing"
+    puts -b "    (4-bit gray level data)"
+    puts -b "17) Area update Auto mode non-flashing"
+    puts -b "    (4-bit gray level data)"
+    puts -b "18) Area update Auto mode flashing"
+    puts -b "    (2-bit gray level data)"
+    puts -b "19) Area update Auto mode non-flashing"
+    puts -b "    (2-bit gray level data)"
+    puts -b "20) Area update Auto mode non-flashing"
+    puts -b "    (1-bit gray level data)"
+    puts -b "21) 1-bit cursor moving"
+    puts -b " "
+    puts -b "Enter test to run (1 - 21): "
+
+    echo ${_EINK_UPDATE_DISPLAY_AREA} 0 0 ${SCREEN_X_RES} ${SCREEN_Y_RES} ${_FX_UPDATE_FULL}>${_EINK_UPDATE_DISPLAY}
+}
+
+get_menu_selection()
+{
+    stop_menu=0
+    show_menu
+        
+    while [ $stop_menu -eq 0 ]; do    
+        
+        read selection
+        if [ $selection -gt 0 ] && [ $selection -lt 99 ]; then
+            stop_menu=1
+        else  
+            puts "Invalid command try again: "
+        fi
+    done
+    
+    return $selection
+}
+
+do_test()
+{
+    test_number=$1
+    
+    case $test_number in
+        1)
+            full_screen_pattern $NO_AUTO_MODE $FOUR_BIT_FLASH $FOUR_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        2)
+            full_screen_pattern $NO_AUTO_MODE $FOUR_BIT_NONFLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        3)
+            full_screen_pattern $NO_AUTO_MODE $TWO_BIT_FLASH $FOUR_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        4)
+            full_screen_pattern $NO_AUTO_MODE $TWO_BIT_NONFLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        5)
+            full_screen_pattern $NO_AUTO_MODE $ONE_BIT_NONFLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        6)
+            full_screen_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $FOUR_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        7)
+            full_screen_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        8)
+            full_screen_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $TWO_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        9)
+            full_screen_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $TWO_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        10)
+            full_screen_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $ONE_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        11)
+            area_update_pattern $NO_AUTO_MODE $FOUR_BIT_FLASH $FOUR_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        12)
+            area_update_pattern $NO_AUTO_MODE $FOUR_BIT_NONFLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        13)
+            area_update_pattern $NO_AUTO_MODE $TWO_BIT_FLASH $FOUR_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        14)
+            area_update_pattern $NO_AUTO_MODE $TWO_BIT_NONFLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        15)
+            area_update_pattern $NO_AUTO_MODE $ONE_BIT_NONFLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        16)
+            area_update_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $FOUR_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        17)
+            area_update_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $FOUR_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        18)
+            area_update_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $TWO_BIT_PATTERN $FLASH_TYPE
+        ;;
+
+        19)
+            area_update_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $TWO_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        20)
+            area_update_pattern $HW_AUTO_MODE $FOUR_BIT_FLASH $ONE_BIT_PATTERN $NON_FLASH_TYPE
+        ;;
+
+        21)
+            cursor_move $ONE_BIT_NONFLASH
+        ;;
+    esac
+}
+
+# Stop the framework, which also clears the screen, and the power daemon.
+#
+wait_framework_done
+stop_powerd
+
+while [ true ]; do
+    get_menu_selection
+    key=$?
+
+    puts "You selected $key"
+    sleep 1
+
+    do_test $key
+    # reset display mode
+    sleep 2
+    change_update_mode $SW_AUTO_MODE 0 0
+done
+

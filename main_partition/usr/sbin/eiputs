@@ -1,0 +1,125 @@
+# useful source script for helping with eips
+# note: depends on /etc/rc.d/functions
+
+puts_init_update()
+{
+    # start at top of screen
+    export EI_ROW_START=1
+    export EI_ROW=${EI_ROW_START}
+}
+
+
+puts_init()
+{
+    # deal with dynamic screen changes
+    update_screen_info
+    
+    # start 2/3rds of the way down the screen
+    export EI_ROW_START=$(( (${SCREEN_Y_RES}/${EIPS_Y_RES} * 2)/3 ))
+    export EI_ROW=${EI_ROW_START}
+}
+
+
+puts()
+{
+    _NO_INC=0
+    _BUFONLY=
+
+    if [ "$1" = "-b" ]; then
+        _BUFONLY="-n"
+
+        shift
+    fi
+    
+    if [ "$1" = "-c" ]; then
+        eips -c
+
+        shift
+
+        export EI_ROW=${EI_ROW_START}
+    fi
+
+    if [ "$1" = "-n" ]; then
+        _NO_INC=1
+
+        shift
+    fi
+
+    if [ $# -eq 1 ]; then
+        eips ${_BUFONLY} 1 ${EI_ROW} "$1"
+
+    else
+        if [ $# -eq 2 ]; then
+            eips ${_BUFONLY} $1 ${EI_ROW} "$2"
+        fi
+    fi
+
+    if [ ${_NO_INC} -eq 0 ]; then
+        export EI_ROW=`expr ${EI_ROW} + 1`
+    fi
+}
+
+
+_EI_ROW_TMPFILE=/tmp/.ei_row.tmp
+
+save_ei_row()
+{
+    echo ${EI_ROW} >${_EI_ROW_TMPFILE}
+}
+
+
+restore_ei_row()
+{
+    export EI_ROW=`cat ${_EI_ROW_TMPFILE}`
+}
+
+
+progress_bar_init()
+{
+    # Set the progress bar's global ending location.
+    #
+    export PROGRESS_END=${1}
+}
+
+
+progress_bar_begin()
+{
+    # Get the progress bar's starting location, local ending
+    # location, and the number of planned increments.
+    #
+    MIN=${1}
+    MAX=${2}
+    INC=${3} 
+    
+    # Compute the progress bar's total span.
+    #
+    SPAN=`expr ${MAX} - ${MIN} + 1`
+    
+    # Remember where we're starting and how much to increment each
+    # update by.
+    #
+    export PROGRESS_INC=`expr ${SPAN} / ${INC}`
+    export PROGRESS_BAR=${MIN}
+}
+
+
+update_progress_bar()
+{
+    # Update the progress bar to the current location. 
+    #
+    pu -p ${PROGRESS_BAR}
+    
+    # Remember where the next progress location should be.
+    #
+    export PROGRESS_BAR=`expr ${PROGRESS_BAR} + ${PROGRESS_INC}`
+}
+
+
+progress_bar_end()
+{
+    # All done -- run the progress bar to its global ending location.
+    #
+    pu -p ${PROGRESS_END}
+    pu -p -1
+}
+

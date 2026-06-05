@@ -1,0 +1,81 @@
+#!/bin/sh
+
+CONF=/etc/tinyrot.conf
+DESTDIR=/var/local/log/
+print_usage () {
+    echo "showlog-cleanup will remove all files specific in a transferfile"
+    echo " which is created in the showlog script"
+    echo "Usage:"
+    echo "showlog-cleanup logfile "
+    echo "    logfile        file containing list of files to remove"
+    echo ""
+    echo "Example: showlog-cleanup odotlite"
+    echo "         will remove files listed in /tmp/lastodotlitesentfile" 
+    exit 1
+}
+
+# -----------------------------------------------------------------------------
+# main
+# -----------------------------------------------------------------------------
+
+[ -f $CONF ] && . $CONF
+
+if [ "x$1" == "x--help" -o "x$1" == "x-h" ]; then
+    print_usage
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# parse args
+# -----------------------------------------------------------------------------
+
+LOG=odotlite
+while [ -n "$1" ]; do
+    __ARG=
+    case $1 in
+        * )
+            LOG="$1"
+            shift
+            ;;
+    esac
+    SHOWLOGCLEAN_ARGS=$__ARGS
+done
+
+PLAIN_SUFFIX="_??????????????"                                                  
+ARCHIVE_SUFFIX=$PLAIN_SUFFIX".gz"
+TRANSFERFILE=/tmp/last${LOG}sentfile
+
+# prevent tinyrot from running, and do not run while tinyrot is running
+(
+uflock 9
+
+if [ -n "$TRANSFERFILE" ]; then
+    # A transferfile is written by the showlog command listing all the
+    # files pushed to the server.  Here we'll delete the files listed
+    # in that file, then adjust the _youngest and _oldest files 
+    # which are used by tinyrot to rotate properly.
+    cat "$TRANSFERFILE" | xargs rm 
+    EFILES="$(ls ${DESTDIR}${LOG}_*${ARCHIVE_SUFFIX} 2>/dev/null)"
+    if [ -n "$EFILES" ]; then
+        # rotated files still exist, so rewrite oldest and youngest files
+        # first file is the oldest, last file is the youngest
+        IFS=$(echo -en "\n\b")
+        for x in $EFILES; do
+            if [ -z "$FIRSTFILE" ]; then
+                FIRSTFILE=$x        
+            fi
+            LASTFILE=$x 
+        done
+        T1="$(echo $FIRSTFILE|sed 's/.*_\([0-9]*\)_.*/\1/g')"
+        T2="$(echo $LASTFILE|sed 's/.*_\([0-9]*\)_.*/\1/g')"
+        echo -n "$T1" > ${DESTDIR}${LOG}_${OLDEST_FILE}
+        echo -n "$T2" > ${DESTDIR}${LOG}_${YOUNGEST_FILE}
+    else 
+        # no rotated files left, so remove oldest and youngest files
+        rm -f ${DESTDIR}${LOG}_${OLDEST_FILE}
+        rm -f ${DESTDIR}${LOG}_${YOUNGEST_FILE}   
+    fi
+    # remove the aggregation file
+    rm -f ${DESTDIR}${LOG}_${AGGR_FILE}
+fi
+) 9> $FLAG_TINYROT_LOCK

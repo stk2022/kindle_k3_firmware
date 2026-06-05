@@ -1,0 +1,45 @@
+#!/bin/sh
+
+NAME="MCS server"
+
+DAEMON=/usr/sbin/mcsd
+PIDFILE=/var/run/`basename $DAEMON`.pid
+CONF_NAME=mcsd
+
+PMOND_START="lipc-set-prop com.lab126.pmond start"
+PMOND_STOP="lipc-set-prop com.lab126.pmond stop"
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_FEATURES=/etc/rc.d/features
+[ -f ${_FEATURES} ] && . ${_FEATURES}
+
+if ( ! is_Mario_WW && ! is_Luigi_Platform ); then
+        msg "skipping on non-Mario-based WW hardware" I
+        exit 0
+fi
+
+case "$1" in
+	start)
+		if [ -x "${DAEMON}" ]; then
+			msg "starting ${NAME}" I
+			${PMOND_START} ${CONF_NAME}
+		fi
+		;;
+
+	stop)
+		if [ -r "${PIDFILE}" ]; then
+			msg "stopping ${NAME}" I
+			${PMOND_STOP} ${CONF_NAME}
+		fi
+		;;
+
+	*)
+		msg "usage: /etc/init.d/${NAME} {start|stop}" W >&2
+		exit 1
+		;;
+esac
+
+exit 0
+

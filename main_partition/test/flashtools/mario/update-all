@@ -1,0 +1,95 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_HARDWARE=`awk '/Hardware/ { print $3 }' </proc/cpuinfo`
+_MARIO="Mario"
+
+_UPDATE_BOOTLOADER=/test/flashtools/update-bootloader
+_UPDATE_ROOTFS=/test/flashtools/update-rootfs
+_UPDATE_KERNEL=/test/flashtools/update-kernel
+
+_UPDATE_DIR=/mnt/mmc/
+
+_BOOTLOADER=u-boot.bin
+_ROOTFS=rootfs.img.gz
+_KERNEL=zImage
+
+_FACTORY_RESET=/usr/sbin/factory_reset
+_SHUTDOWN=/sbin/sysreboot
+_SYNC=/bin/sync
+
+_DONT_REBOOT=0
+_RES=0
+
+load_reboot()
+{
+    ${_SHUTDOWN} -h >/dev/null 2>/dev/null
+    ${_SYNC}
+}
+
+reboot_now()
+{
+    ${_SYNC}
+    clean_reboot
+}
+
+FACTORY_RESET()
+{
+    ${_FACTORY_RESET} ${_DONT_REBOOT}
+    ${_SYNC}
+}
+
+# Allow the default update directory to be overridden.
+#
+if [ $# != 0 ]; then
+    _UPDATE_DIR=$1
+fi
+
+# Mario's kernel is booted from u-boot.
+#
+if [ ${_HARDWARE} = ${_MARIO} ]; then
+    _KERNEL=uImage
+fi
+
+# Stop the framework and the power daemon.
+#
+wait_framework_done
+stop_all
+
+# Give us a fighting chance to reboot.
+#
+load_reboot
+
+# If the bootloader image is available, attempt to flash it.
+#
+if [ -f ${_UPDATE_DIR}${_BOOTLOADER} ]; then
+    ${_UPDATE_BOOTLOADER} ${_UPDATE_DIR}${_BOOTLOADER}
+    _RES=$?
+fi
+
+# If the kernel image is available, attempt to flash it.
+#
+if [ ${_RES} -eq 0 ] && [ -f ${_UPDATE_DIR}${_KERNEL} ]; then
+    ${_UPDATE_KERNEL} ${_UPDATE_DIR}${_KERNEL}
+    _RES=$?
+fi
+
+# If the rootfs image is available, attempt to flash it.
+#
+if [ ${_RES} -eq 0 ] && [ -f ${_UPDATE_DIR}${_ROOTFS} ]; then
+    FACTORY_RESET
+    
+    ${_UPDATE_ROOTFS} ${_UPDATE_DIR}${_ROOTFS}
+    _RES=$?
+fi
+
+# Upon success, reboot.
+#
+if [ ${_RES} -eq 0 ]; then
+    echo "rebooting now..."
+    reboot_now
+fi
+
+exit ${_RES}

@@ -1,0 +1,29 @@
+<stylesheet>
+
+<page>
+<rule attr="continue" val="cascade" />
+<rule attr="display" val="block" />
+<rule attr="layout" val="reflow" />
+</page>
+
+<paragraph>
+<rule attr="margin-bottom" val="1l" />
+</paragraph>
+
+<dropcap>
+<rule attr="float" val="left" />
+</dropcap>
+
+<region type="header">
+<rule attr="display" val="none" />
+</region>
+
+<region type="footer">
+<rule attr="display" val="none" />
+</region>
+
+<extratokens>
+<rule attr="display" val="none" />
+</extratokens>
+
+</stylesheet>

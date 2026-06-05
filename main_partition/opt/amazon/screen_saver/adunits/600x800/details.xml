@@ -1,0 +1,12 @@
+<root version="2.0" defaultDiv="id_AD-1000-2000-00001" cacheFile="AD-1000-2000-00001">
+<instructions>
+
+<div name="id_AD-1000-2000-00001">
+<text x="35" y="90" width="530" height="500" lineMargin="30">
+<span size="0">Please connect wirelessly to download the latest Special Offers.  When new offers are available for your Kindle they will display automatically.
+</span>
+</text>
+
+</div>
+</instructions>
+</root>

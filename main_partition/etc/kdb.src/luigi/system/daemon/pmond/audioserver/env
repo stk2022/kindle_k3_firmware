@@ -1,0 +1,4 @@
+RG002
+40
+<DATA>
+LD_LIBRARY_PATH=/usr/lib/tts/speech/components/common/:/usr/lib/tts

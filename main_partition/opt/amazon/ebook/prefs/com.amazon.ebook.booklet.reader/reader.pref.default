@@ -1,0 +1,15 @@
+VERSION = 2
+LAST_BOOK_READ =
+FONT_SIZE = 21
+# the dictionary name should be from the metadata, it has nothing to do with the filename
+DICTIONARY = The New Oxford American Dictionary
+JUSTIFICATION = full
+HORIZONTAL_MARGIN = 40
+ALLOW_JUSTIFICATION_CHANGE = false
+ALLOW_TWO_COLUMN_VIEW  = false
+ALLOW_ARTICLE_THUMBNAIL = false
+ALLOW_READING_INDICATOR = true
+ALLOW_USER_FONT = false
+ALLOW_USER_LINE_SPACING = false
+FONT_FAMILY = serif
+PAGE_COUNT_BEFORE_REFRESH = 6

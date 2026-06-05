@@ -1,0 +1,159 @@
+#!/bin/sh
+################################################################################
+#
+#  File:   diag
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   09/16/08
+#
+#  Copyright (C) 2008-2010 Amazon Technologies
+#
+#  Description:
+#
+#      System Diagnostic's startup script that does the following:
+#
+#       1)  If system diagnostics is enabled, switch to the diagnostic
+#           runlevel if we're not already there, and then launch system
+#           diagnostics.
+#
+#       2)  If system diagnostics is disabled, we log the reason that we're 
+#           not going to launch system diagnostics.
+#
+#   Variables
+#       DIAGNOSTIC_ROOT         - Root folder holding system diagnostics script
+#       USB_EXPORT_ROOT         - Root folder for USB mass storage export
+#       ENABLE_DIAGNOSTICS_FILE - Full pathname of file that enables diagnostics
+#       ENABLE_DIAGNOSTICS_FS_FILE - Full pathname to redundant file in filesystem
+#                                   that enables diagnostics
+#       DIAG_RUNLEVEL           - Run level dedicated to system diagnostics
+#       EN_VARS                 - Path to diagnostic environment variables
+#
+################################################################################
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_PATHS=/etc/sysconfig/paths
+[ -f ${_PATHS} ] && . ${_PATHS}
+
+# Push the progressbar to 100% if the diags are starting up.
+DIAGS_STARTUP_PROGRESS=100
+
+# Important Locations on Target
+DIAGNOSTIC_ROOT="/test/diags/factory"
+USB_EXPORT_ROOT="/mnt/base-us"
+ENABLE_REBOOT_TEST_FILE="${USB_EXPORT_ROOT}/ENABLE_REBOOT_TEST"
+ENABLE_DIAGNOSTICS_FILE="${USB_EXPORT_ROOT}/ENABLE_DIAGS"
+ENABLE_DIAGNOSTICS_FS_FILE="/ENABLE_DIAGS"
+DIAG_RUNLEVEL=4
+
+# Initialize and export all environment variables
+EN_VARS="$DIAGNOSTIC_ROOT/environment.vars"
+[ -f ${EN_VARS} ] && . ${EN_VARS}
+
+mount_diags()
+{
+    DEV_ROOT=`kdb get system/driver/filesystem/DEV_ROOT`
+    DIAGS_PART_DEV=${DEV_ROOT}`kdb get system/driver/filesystem/DEV_PART_DIAGS`
+    DIAGS_MNT_OPT="ro"
+    DIAGS_MNT_SRC=${DIAGS_PART_DEV}
+    if [ -r ${DIAGS_IMG_FILE} ]; then
+        if cramfsck ${DIAGS_IMG_FILE} ; then
+            DIAGS_MNT_OPT="${DIAGS_MNT_OPT},loop"
+            DIAGS_MNT_SRC="${DIAGS_IMG_FILE}"
+        else
+            echo "diagfs:${DIAGS_IMG_FILE} was found but does not appear to contain a file-system!"
+        fi
+    fi
+
+    # First, copy off original md5list file, removing references to the diags content
+    if [ -f $DIAGS_ROOTFS_MD5_LIST_FILE ]; then
+        grep -v "$DIAGS_ROOT" "${DIAGS_ROOTFS_MD5_LIST_FILE}" > "$DIAGS_TARGET_ROOTFS_MD5_LIST"
+    fi
+
+    if ! cramfsck ${DIAGS_MNT_SRC} ; then
+        echo "diagfs:${DIAGS_MNT_SRC} does not appear to contain a file-system, skipping."
+    else
+        # Now mount the override filesystem
+        if ! mount -t cramfs -o ${DIAGS_MNT_OPT} ${DIAGS_MNT_SRC} ${DIAGS_MNT} ; then
+            echo "diagfs:${DIAGS_MNT_SRC} could not mount the file-system, skipping."
+        fi
+    fi
+
+    # Grab out diagnostic md5 list information - we don't care if above mount failed
+    if [ -f $DIAGS_ROOTFS_MD5_LIST_FILE ]; then
+        grep "$DIAGS_ROOT" "${DIAGS_ROOTFS_MD5_LIST_FILE}" > "$DIAGS_TARGET_DIAGS_MD5_LIST"
+    fi
+}
+
+start_it_up()
+{
+	# User does not want to run diags (but might want to run the reboot test) if they have a
+	# prototype device.
+	#
+	if ( is_PROTO && ! [ -f $ENABLE_REBOOT_TEST_FILE ] ); then
+	    msg "Prototype: not starting Diagnostic Services" I
+	    exit 0
+	fi
+	# User wants to run diags or run at the diags level. 
+	# Make sure diags directory is there, the "disable diags" file
+	# does not exist, and that the system_diags.sh script is there 
+	# and executable.  If this is the case, switch to the diagnostics
+	# level.
+	#		
+	if ! [ "$RUNLEVEL" == "" ] && [ ${RUNLEVEL} -ne ${DIAG_RUNLEVEL} ] && [ -d $DIAGNOSTIC_ROOT ] && ( [ -f $ENABLE_REBOOT_TEST_FILE ] || [ -f $ENABLE_DIAGNOSTICS_FILE ] || [ -f $ENABLE_DIAGNOSTICS_FS_FILE ] ) \
+		&& [ -x $SYSTEM_DIAGNOSTICS_BIN ]; then
+		# restart eink, if necessary
+		eink_restart_check
+		set_boot_progress ${DIAGS_STARTUP_PROGRESS}
+		telinit ${DIAG_RUNLEVEL}
+		exit 0
+	elif [ -d $DIAGNOSTIC_ROOT ] && \
+           ( [ -f $ENABLE_DIAGNOSTICS_FILE ] || [ -f $ENABLE_DIAGNOSTICS_FS_FILE ] ) && \
+		[ -x $SYSTEM_DIAGNOSTICS_BIN ]; then
+
+		# We're going to launch into diagnostics
+		# If a diagnostic override image exists, map onto diags folder first
+		mount_diags
+
+		# Start up system diagnostics
+		${SYSTEM_DIAGNOSTICS_BIN} start
+	else
+		msg "not starting Diagnostic Services" I
+		if ! [ -d $DIAGNOSTIC_ROOT ]; then
+			msg "$DIAGNOSTIC_ROOT does not exist" I
+		elif ! [ -f $ENABLE_DIAGNOSTICS_FILE ] && ! [ -f $ENABLE_DIAGNOSTICS_FS_FILE ]; then
+			msg "$ENABLE_DIAGNOSTICS_FILE does not exist, forcing diagnostic disable" I
+		elif ! [ -x $SYSTEM_DIAGNOSTICS_BIN ]; then
+			msg "$SYSTEM_DIAGNOSTICS_BIN does not exist / is not executable." I
+		fi
+	fi
+}
+
+shut_it_down()
+{
+	if [ -x $SYSTEM_DIAGNOSTICS_BIN ]; then
+		${SYSTEM_DIAGNOSTICS_BIN} stop
+	fi
+}
+
+ 
+case "$1" in
+	stop)
+		shut_it_down
+		;;
+	start)
+		start_it_up
+		;;
+	restart|force-reload)
+		start_it_up
+		shut_it_down
+		;;
+	*)
+		msg "Usage: /etc/init.d/diag {start|stop}" W >&2
+		exit 1
+		;;
+esac
+
+exit 0

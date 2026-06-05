@@ -1,0 +1,195 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   fiveway.functions.mario
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   09/10/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Contains the hal layer for the fiveway diagnostic on a Mario Platform
+#
+#   Data Structures
+#       FIVEWAY_CONTROL_ID_LIST - List of fiveway controls to test
+#
+#   Constants
+#       FIVEWAY_LEFT_ID         - Fiveway control left direction
+#       FIVEWAY_RIGHT_ID        - Fiveway control right direction
+#       FIVEWAY_UP_ID           - Fiveway control up direction
+#       FIVEWAY_DOWN_ID         - Fiveway control down direction
+#       FIVEWAY_CENTER_ID       - Fiveway control center button pushed
+#
+#   Routines
+#       fiveway_button_id_to_label()- Given a fiveway code, return the name string
+#       fiveway_do_test_control()   - Test a given fiveway control
+#       fiveway_thump_haptic()      - Thump the haptic device
+#       fiveway_hal_init()          - Hal initialization routine
+#       fiveway_hal_exit()          - Hal cleanup exit routine
+#
+######################################################################
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Useful Diagnostic Functions
+[ -f ${_DIAG_FUNCTIONS} ] && . ${_DIAG_FUNCTIONS}
+
+#
+# Support Tools
+#
+export RUN_BUTTON_VERIFY="$DIAG_TOOL_ROOT/button_verify"
+
+#
+# Give each button a unique identifier.
+#
+export FIVEWAY_LEFT_ID=105
+export FIVEWAY_RIGHT_ID=106
+export FIVEWAY_UP_ID=122
+export FIVEWAY_DOWN_ID=123
+export FIVEWAY_CENTER_ID=92
+
+#
+# List of fiveway controls to test
+#
+export FIVEWAY_CONTROL_ID_LIST="$FIVEWAY_LEFT_ID $FIVEWAY_RIGHT_ID $FIVEWAY_UP_ID $FIVEWAY_DOWN_ID $FIVEWAY_CENTER_ID"
+
+
+#
+# Define menu item keys (don't use SUCCESS_KEY or FAILURE_KEY)
+#
+HAPTIC_TRIGGER_KEY=$FIVEWAY_CENTER_ID
+
+
+######################################################################
+# Function:     fiveway_button_id_to_label
+# Purpose:      Return the name as a string of the passed fiveway control
+# Paramters:    Fiveway control id.  One of:
+#                   FIVEWAY_LEFT_ID,
+#                   FIVEWAY_RIGHT_ID,
+#                   FIVEWAY_UP_ID,
+#                   FIVEWAY_DOWN_ID,
+#                   FIVEWAY_CENTER_ID
+# Returns:      none
+# Side Effect:  Echo's out the name of the control
+######################################################################
+fiveway_button_id_to_label()
+{
+    case "$1" in
+
+    $FIVEWAY_LEFT_ID)   echo "Left" ;;
+    $FIVEWAY_RIGHT_ID)  echo "Right" ;;
+    $FIVEWAY_UP_ID)     echo "Up" ;;
+    $FIVEWAY_DOWN_ID)   echo "Down" ;;
+    $FIVEWAY_CENTER_ID) echo "Center" ;;
+    *)  
+        echo "ERROR"
+        ;;
+    esac
+}
+
+
+######################################################################
+# Function:    fiveway_do_test_control
+# Purpose:     While watching for button activity, ask the operator
+#               to press and release the specified button and verify that
+#               the system sees the button pressed and released.
+# Paramters:   id - unique ID for the specific 5-way "button"
+# Returns:     none
+# Side Effect: SUB_TEST_PASS is set based on result
+######################################################################
+fiveway_do_test_control()
+{
+    button_id="$1"
+    name=`fiveway_button_id_to_label "$button_id"`
+
+    vmsg "fiveway_do_test_control($name,$button_id)"
+
+    #
+    # For each button on the device, ask the user to press and release
+    # the button and verify that the system sees the button was pressed.
+    #
+    #clear_screen
+    #${DOUT} -n 15 4 "5-Way Diagnostics"
+    #${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 2 8 "Press and release the $name button now.        "
+    ${DOUT} -n 2 15 "Press $EXIT_KEY_LABEL if you pressed and released the"
+    ${DOUT} 2 16 "$name button but this screen did not go away.    "
+
+    #
+    # Go look for the button pressed and released
+    #
+    DONE=0
+    while [ $DONE -eq 0 ]; do
+        button_seen_id=`$GET_KBD_FIVEWAY_INPUT`
+        if [ $button_id -eq $button_seen_id ]; then
+            success "$name 5-Way Diagnostic"
+            DONE=1
+        elif [ $button_seen_id -eq -1 ]; then
+            # Enter character from the serial port, throw away...
+            vmsg "Fiveway verify throwing away console return"
+        else
+            # Wrong control (or X key) was pressed
+            vmsg "5-Way verify failed for $button_id"
+            failure "$name 5-Way Diagnostic"
+            DONE=1
+        fi
+    done
+}
+
+
+
+######################################################################
+# Function:    fiveway_thump_haptic
+# Purpose:     Cause the haptic device to "thump", or vibrate for a short
+#               period of time
+# Paramters:   none
+# Returns:     0 - success making the call to the driver
+#              1 - driver call failed
+######################################################################
+fiveway_thump_haptic()
+{
+    if [ -f /proc/haptic ]; then
+        echo "thump" > /proc/haptic
+        fth_res=$?
+    else
+        fth_res=1
+    fi
+    return $fth_res
+}
+
+
+######################################################################
+# Function:     fiveway_hal_init
+# Purpose:      Hal initialization routine for fiveway control.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+fiveway_hal_init()
+{
+    vmsg "fiveway_hal_init()"
+
+    #
+    # Open the driver here...
+    #
+}
+
+
+######################################################################
+# Function:     fiveway_hal_exit
+# Purpose:      Hal cleanup routine for fiveway.
+#               This routine currently doesn't need to do anything.
+# Paramters:    none
+# Returns:      none
+######################################################################
+fiveway_hal_exit()
+{
+    vmsg "fiveway_hal_exit()"
+
+    #
+    # Close the 5-way driver here....
+    #
+}

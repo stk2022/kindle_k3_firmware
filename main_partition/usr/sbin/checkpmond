@@ -1,0 +1,13 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f $_FUNCTIONS ] && . $_FUNCTIONS
+
+PID=`pgrep -f /usr/bin/pmond | xargs`
+if [ -z "$PID" ]; then
+    msg "pmond is not running" W
+    # Start pmond
+    /etc/init.d/pmond start
+fi
+
+    

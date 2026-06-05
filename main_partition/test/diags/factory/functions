@@ -1,0 +1,1154 @@
+#!/bin/sh
+######################################################################
+#
+#  File:   functions
+#
+#  Author: Nick Vaccaro <nvaccaro@lab126.com>
+#
+#  Date:   09/16/08
+#
+#  Copyright 2008, Lab126, Inc.  All rights reserved.
+#
+#  Description:
+#      Contains common routines used by system diagnostics.
+#
+#   Routines
+#       process_running()           - Determine if a process is running
+#       get_device_serial_number()  - Get device serial number from system
+#       get_time()                  - Get current time in seconds
+#       disable_diag_timer()        - Disable the diagnostic timer
+#       enable_diag_timer()         - Enable the diagnostic timer
+#       diag_timer_in_use()         - Check whether timer is in use
+#       get_timer_run_time()        - Return how long timer's been running
+#       get_timer_start()           - Return time when timer was started
+#       set_timeout()               - Set a timeout for the timer
+#       check_timeout()             - Check to see if timer has reached timeout
+#       do_enable_console_logfile() - Enable outputting to the console logfile
+#       do_disable_console_logfile()- Disable outputting to the console logfile
+#       do_local_echo()             - Echo string to logfile and stdout
+#       serial_eips()               - Send string to display and stdout
+#       clear_screen()              - Clear the screen
+#       erase_line()                - Clear a particular line on the screen
+#       file_to_screen()            - Display given file on the screen
+#       diaglog()                   - Output log to stdout, console and diag logfiles
+#       init_diaglog()              - Initialize diagnostic log
+#       did_system_diags_fail()     - Determine if system diagnostics failed
+#       save_diaglog()              - Save the diagnostic log to the file system
+#       dump_diaglog()              - Dump the diagnotic log to the screen/stdout
+#       do_device_pre_reboot_cleanup- Do any pre-reboot processing needed (save logs)
+#       vmsg()                      - Verbose logging
+#       display_pass_fail()         - Display a pass/fail message on the screen
+#       main_success()              - Log PASS result for main diagnostic test
+#       main_failure()              - Log FAIL result for main diagnostic test
+#       failure()                   - Log FAIL result for diagnostic sub-test
+#       success()                   - Log PASS result for diagnostic sub-test
+#       main_success_or_fail()      - Determine if main diagnostic passed or not
+#       did_diag_pass()             - Indicates whether diagnostic passed
+#       did_diag_fail()             - Indicates whether diagnostic failed
+#       clear_diag_fail()           - Clear the test failed flag indicator
+#       enter_diag()                - Must be called when entering a diagnostic test
+#       exit_diag()                 - Must be called when exiting a diagnotic test
+#       wait_for_key()              - Wait for a given key to be pressed
+#       sh_array()                  - Array indexing routine
+#       subtest_verify()            - Display screen for user to indicate pass/fail for test
+#       display_pass_fail_dialog()  - Display the main PASS/FAIL status screen
+#		dump_char()					- Eat a character from keyboard or serial port
+#       diag_line_read()            - Read a line from the keyboard or serial port
+#
+######################################################################
+
+#
+# Needed for EIPS-related constants
+#
+#_FUNCTIONS=/etc/rc.d/functions
+#[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+# Define a variable representing the last line on the display to draw to
+#let EIPS_BOTTOM_LINE=$SCREEN_Y_RES/$EIPS_Y_RES-1
+
+######################################################################
+# Function:     process_running
+# Purpose:      Determine if a process whose name contains the passed
+#               in string is running or not.
+# Parameters:   String - process name
+# Returns:      0 - Process not running
+#               1 - Process running
+# Assumptions:  Search finds existence of string, but if string is a
+#               subset of another string, it will trigger a false
+#               find.  In other words, a call like "process_running s"
+#               would most likely return 1 because many processes contain
+#               the character s.
+#
+#               Thus, this call's behavior needs to be checked in the 
+#               context of how and where you're using it.
+# Side Effect:  none
+######################################################################
+process_running()
+{
+    process_name="$1"
+    proc_list=`ps aux` > /dev/null 2>&1
+    NOT_FOUND=`echo "$proc_list" | grep "$process_name"`
+    if [ -z "$NOT_FOUND" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+
+######################################################################
+# Function:     wait_for_process_start
+# Purpose:      Wait for given process to start running
+# Parameters:   name - name of procedure in ps table to wait for 
+#                   completion on
+# Returns:      none
+######################################################################
+wait_for_process_start()
+{
+    _PROC_NAME="$1"
+
+    #
+    # Wait for process to start...
+    #
+    PLAYING=0
+    while [ $PLAYING -eq 0 ]; do
+        process_running "$_PROC_NAME" > /dev/null 2>&1
+        RETVAL=$?
+        if [ $RETVAL -eq 1 ]; then
+            PLAYING=1
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     wait_for_process_stop
+# Purpose:      Wait for given process to stop running
+# Parameters:   name - name of procedure in ps table to wait for 
+#                   completion on
+# Returns:      none
+######################################################################
+wait_for_process_stop()
+{
+    _PROC_NAME="$1"
+
+    #
+    # Wait for process to finish...
+    #
+    PLAYING=1
+    while [ $PLAYING -eq 1 ]; do
+        process_running "$_PROC_NAME" > /dev/null 2>&1
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            PLAYING=0
+        fi
+    done
+}
+
+
+
+#
+# Device information routines
+#
+
+######################################################################
+# Function:     get_device_serial_number
+# Purpose:      Get the device's serial number
+# Parameters:   none
+# Returns:      echo's back the device's serial number as reported by
+#               /proc/usid
+# Side Effects: Sets the DEVICE_SERIAL_NUMBER global variable
+######################################################################
+get_device_serial_number()
+{
+    export DEVICE_SERIAL_NUMBER=`cat /proc/usid`
+    do_local_echo "Serial Number: $DEVICE_SERIAL_NUMBER"
+}
+
+
+#
+# Timer utilities
+#
+export SYSTEM_DIAGS_TIMER_RUNNING=0
+export SYSTEM_DIAGS_TIMER_START=0
+export SYSTEM_DIAGS_TIMER_END=0
+
+######################################################################
+# Function:     get_time
+# Purpose:      Get the current time.  We use uptime as a relative
+#               time so that we're not vulnerable to time changes.
+# Parameters:   none
+# Returns:      int - the relative time in seconds
+######################################################################
+get_time()
+{
+    # Return value in seconds
+    cur_time=`cat /proc/uptime | sed -e 's/\.[0-9]* .*//'`
+    return $cur_time
+}
+
+
+
+######################################################################
+# Function:     disable_diag_timer
+# Purpose:      Disable the diagnostic timer
+# Parameters:   none
+# Returns:      none
+######################################################################
+disable_diag_timer()
+{
+    SYSTEM_DIAGS_TIMER_RUNNING=0
+}
+
+
+######################################################################
+# Function:     enable_diag_timer
+# Purpose:      Enable the diagnostic timer (set flag indicating it's
+#               running).
+# Parameters:   none
+# Returns:      none
+######################################################################
+enable_diag_timer()
+{
+    SYSTEM_DIAGS_TIMER_RUNNING=1
+}
+
+
+######################################################################
+# Function:     diag_timer_in_use
+# Purpose:      Return if the timer is currently running or not.
+# Parameters:   none
+# Returns:      0 - Timer not running
+#               1 - Timer currently running
+######################################################################
+diag_timer_in_use()
+{
+    return $SYSTEM_DIAGS_TIMER_RUNNING
+}
+
+
+######################################################################
+# Function:     get_timer_run_time
+# Purpose:      Return the amount of time that the timer has been
+#               running (in seconds)
+# Parameters:   none
+# Returns:      time (in seconds) since the timer was started.
+######################################################################
+get_timer_run_time()
+{
+    get_time
+    cur_time="$?"
+    return `expr $cur_time - $SYSTEM_DIAGS_TIMER_START`
+}
+
+
+######################################################################
+# Function:     get_timer_start
+# Purpose:      Get the time when the timer was started.
+# Parameters:   none
+# Returns:      time (in seconds) when timer was started
+######################################################################
+get_timer_start()
+{
+    return ${SYSTEM_DIAGS_TIMER_START}
+}
+
+
+######################################################################
+# Function:     set_timeout
+# Purpose:      Start the timer by setting our timer start and end times
+# Parameters:   timeout - value in seconds before timer timeout occurs
+# Returns:      0 - Timer was set 
+#               1 - Timer was in use, TIMEOUT NOT SET
+# Assumptions:  Both the return value from get_time and the user-passed
+#               timeout value are of the same timebase (seconds in this case).
+######################################################################
+set_timeout()
+{
+    # Timer must be disabled first...
+    diag_timer_in_use
+    in_use=$?
+    if [ $in_use -eq 0 ]; then
+        enable_diag_timer
+        get_time
+        SYSTEM_DIAGS_TIMER_START=$?
+        SYSTEM_DIAGS_TIMER_END=`expr $SYSTEM_DIAGS_TIMER_START + $1`
+        return 0
+    else
+        echo "set_timeout() saw timer in use..."
+        return 1
+    fi
+}
+
+
+
+######################################################################
+# Function:     check_timeout
+# Purpose:      Read the timer and determine if we've timed out yet
+# Parameters:   none
+# Returns:      0 - timer's timeout was reached
+#               non-zero - seconds left before timeout
+######################################################################
+check_timeout()
+{
+    get_time
+    cur_time=$?
+    if [ $SYSTEM_DIAGS_TIMER_RUNNING -eq 1 ] && \
+       [ $SYSTEM_DIAGS_TIMER_END -le $cur_time ]; then
+        return 0
+    else
+        time_left=`expr $SYSTEM_DIAGS_TIMER_END - $cur_time`
+        return $time_left
+    fi
+}
+
+
+#
+# Useful screen utility functions
+#
+
+export LOG_OUTPUT_TO_LOGFILE
+
+######################################################################
+# Function:     do_enable_console_logfile
+# Purpose:      Enable logging output to a logfile.
+# Parameters:   none
+# Returns:      none
+######################################################################
+do_enable_console_logfile()
+{
+    export LOG_OUTPUT_TO_LOGFILE=1
+}
+
+
+######################################################################
+# Function:     do_disable_console_logfile
+# Purpose:      Disable logging output to a logfile.
+# Parameters:   none
+# Returns:      none
+######################################################################
+do_disable_console_logfile()
+{
+    export LOG_OUTPUT_TO_LOGFILE=0
+}
+
+
+######################################################################
+# Function:     do_local_echo
+# Purpose:      Echo output to both logfile and console
+# Parameters:   String to log / output
+# Returns:      none
+######################################################################
+do_local_echo()
+{
+    local_str="$1"
+    if [ $LOG_OUTPUT_TO_LOGFILE -eq 1 ]; then
+        echo $local_str >> "$DIAGNOSTIC_CONSOLE_LOGFILE"
+    fi
+    echo $local_str
+    if [ -n "$SERIAL_USB_ENABLED" ] && [ $SERIAL_USB_ENABLED -eq 1 ]; then
+        echo  $local_str > /dev/ttygserial
+    fi
+}
+
+
+
+######################################################################
+# Function:     serial_eips
+# Purpose:      Given an output line formatted for eips, send that string
+#               to the EIPS tool for output on the screen as well as
+#               sending the string to the serial console output as well.
+# Parameters:   EIPS formatted string to log / output
+# Returns:      none
+######################################################################
+serial_eips()
+{
+    # Find which parm is the string...
+    if [ "$1" != "-c" ]; then
+        if [ "$1" = "-n" ]; then
+            x_coord="$2"
+            y_coord="$3"
+            if [ $# -lt 5 ] || [ $5 -eq 1 ]; then
+                let x_coord+=$SCREEN_X_OFFSET
+                let y_coord+=$SCREEN_Y_OFFSET
+            fi
+            str="$4"
+            ${EIPS} -n $x_coord $y_coord "$str" > /dev/null 2>&1
+            do_local_echo "$str"
+        elif [ "$1" = "-p" ] || [ "$1" = "-s" ]; then
+            ${EIPS} "$@" > /dev/null 2>&1
+        else
+            x_coord="$1"
+            y_coord="$2"
+            if [ $# -lt 4 ] || [ $4 -eq 1 ]; then
+                let x_coord+=$SCREEN_X_OFFSET
+                let y_coord+=$SCREEN_Y_OFFSET
+            fi
+            str="$3"
+            ${EIPS} $x_coord $y_coord "$str" > /dev/null 2>&1
+            do_local_echo "$str"
+        fi
+    else
+        # Scroll the serial console 2 lines on a clear screen...
+        echo ""
+        echo ""
+        ${EIPS} "$@" > /dev/null 2>&1
+    fi
+}
+
+
+######################################################################
+# Function:     clear_screen
+# Purpose:      Clear the screen
+# Parameters:   none
+# Returns:      none
+######################################################################
+clear_screen()
+{
+    # Clear the screen
+    ${EIPS} -c
+}
+
+
+######################################################################
+# Function:     erase_line
+# Purpose:      Clear a particular line on the screen
+# Parameters:   line - the number of the line to clear
+# Returns:      none
+######################################################################
+erase_line()
+{
+    ${DOUT} -n 0 $1 "                                                "
+}
+
+
+######################################################################
+# Function:     file_to_screen
+# Purpose:      Output the diagnostic logfile to the screen.
+# Parameters:   none
+# Returns:      none
+######################################################################
+file_to_screen()
+{
+    # Dump the target file out to the screen, one line at a time...
+    vmsg "file_to_screen()"
+    let linenum=1
+    while read LINE; do
+        # line could scroll off bottom of screen, we don't care as EIPS handles it
+        ${DOUT} -n 1 $linenum "$LINE" 0
+        let linenum++
+    done < "$1"
+
+    # Now print a blank line to dump the screen cache (end the "-n" sequence)
+    ${DOUT} 1 $linenum " " 0
+}
+
+
+######################################################################
+# Function:     diaglog
+# Purpose:      Output log string to diagnostic logfile as well as
+#               stdout and the console logfile
+# Parameters:   String to log
+# Returns:      none
+######################################################################
+diaglog()
+{
+    # Echo out to diagnostic logfile
+    echo "$@" >> $DIAGNOSTIC_LOGFILE
+    do_local_echo "$@"
+}
+
+
+######################################################################
+# Function:     init_diaglog
+# Purpose:      Initialize the diagnostic logfile.  If an older one
+#               already exists, remove it.
+# Parameters:   none
+# Returns:      none
+# Side Effect:  Removed older logfile if present
+######################################################################
+init_diaglog()
+{
+    # Clean up any old diagnostic results logfiles
+    if [ -f $DIAGNOSTIC_LOGFILE ]; then
+        rm $DIAGNOSTIC_LOGFILE 
+    fi
+
+    # If the diagnostic folder doesn't exist, make it now..
+    if ! [ -d $DIAG_LOG_ROOT ]; then
+        echo "Making diagnostic root logfile $DIAG_LOG_ROOT"
+        mkdir "$DIAG_LOG_ROOT"
+    fi
+}
+
+
+######################################################################
+# Function:     did_system_diags_fail
+# Purpose:      Determine if system diagnostics failed or not.  If no
+#               tests were run, let the caller know that as well
+# Parameters:   none
+# Returns:      0 - System Diagnostics Passed
+#               1 - System Diagnostics Failed
+#               2 - System Diagnostics were never run...
+######################################################################
+did_system_diags_fail()
+{
+    grep "FAIL :" "$DIAGNOSTIC_LOGFILE" > /dev/null 2>&1
+    not_found=$?
+    if [ $not_found -eq 1 ]; then
+        # Diagnostics Passed
+        return 0
+    else
+        # Diagnostics Failed - if they failed because they weren't run,
+        # bypass the confirmation dialog....
+        if ! [ -f "$DIAGNOSTIC_LOGFILE" ]; then
+            return 2
+        else
+            return 1
+        fi
+    fi
+}
+
+export DIAG_TARGET_LOGFILE=
+######################################################################
+# Function:     save_diaglog(int replace)
+# Purpose:      Save off the diagnostic results logfile to NAND,
+#               storing it in the diagnostic folder
+# Parameters:   overwrite
+#                   0 - Create a unique logfile name
+#                   1 - Overwrite the diag_results.0 file...
+#               operator
+#                   0 - Don't create a separate operator logfile
+#                   1 - creat a separate operator logfile
+# Returns:      none
+######################################################################
+save_diaglog()
+{
+    DIAGLOG_OVERWRITE=$1
+    if [ $# -ge 2 ]; then
+        CREATE_OPERATOR_LOG=$2
+    else
+        CREATE_OPERATOR_LOG=0
+    fi
+    if [ -f $DIAGNOSTIC_LOGFILE ]; then
+        LOGFILE_NUMBER=0
+        if [ $DIAGLOG_OVERWRITE -eq 0 ]; then
+            # Give diagnostic logfile a unique name
+            while [ -f $SAVED_DIAGNOSTIC_LOGFILE.${LOGFILE_NUMBER}.txt ]; do
+                let LOGFILE_NUMBER+=1
+            done
+        fi
+        export DIAG_TARGET_LOGFILE="${SAVED_DIAGNOSTIC_LOGFILE}.${LOGFILE_NUMBER}.txt"
+        vmsg "Saved copy of $DIAGNOSTIC_LOGFILE as ${DIAG_TARGET_LOGFILE}"
+        cp -a $DIAGNOSTIC_LOGFILE "${DIAG_TARGET_LOGFILE}" > /dev/null 2>&1
+        if [ $CREATE_OPERATOR_LOG -ne 0 ]; then
+            LOGFILE_NUMBER=0
+            if [ $DIAGLOG_OVERWRITE -eq 0 ]; then
+                # Give diagnostic logfile a unique name
+                while [ -f $SAVED_OPERATOR_DIAGNOSTIC_LOGFILE.${LOGFILE_NUMBER}.txt ]; do
+                    let LOGFILE_NUMBER+=1
+                done
+            fi
+            export DIAG_OP_TARGET_LOGFILE="${SAVED_OPERATOR_DIAGNOSTIC_LOGFILE}.${LOGFILE_NUMBER}.txt"
+            do_local_echo "Saved copy of $DIAGNOSTIC_LOGFILE as ${DIAG_OP_TARGET_LOGFILE}"
+            cp -a $DIAGNOSTIC_LOGFILE "${DIAG_OP_TARGET_LOGFILE}" > /dev/null 2>&1
+        fi
+        sync
+    else
+        vmsg "Did not save copy of $DIAGNOSTIC_LOGFILE - not found"
+    fi
+}
+
+
+######################################################################
+# Function:     dump_diaglog
+# Purpose:      Display the diagnostic log on screen and serial console.
+#               Wait for operator ack before returning
+# Parameters:   none
+# Returns:      none
+######################################################################
+dump_diaglog()
+{
+    if [ -f $DIAGNOSTIC_LOGFILE ]; then
+        # Add some instructions to top of screen/file
+        echo "Press $EXIT_KEY_LABEL to dismiss logfile and reboot device." >> $TMP_DIAG_LOGFILE
+        echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" >> $TMP_DIAG_LOGFILE
+        did_system_diags_fail
+        RETVAL=$?
+        if [ $RETVAL -eq 1 ]; then
+            echo "FAILED - System Diagnostic Tests Failed !" >> $TMP_DIAG_LOGFILE
+        else
+            echo "PASSED - System Diagnostic Tests Passed !" >> $TMP_DIAG_LOGFILE
+        fi
+        echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" >> $TMP_DIAG_LOGFILE
+        cat $DIAGNOSTIC_LOGFILE >> $TMP_DIAG_LOGFILE
+        mv $TMP_DIAG_LOGFILE $DIAGNOSTIC_LOGFILE
+
+        # Print out the diagnostic logfile to the screen
+        # file_to_screen $DIAGNOSTIC_LOGFILE
+        clear_screen
+        ${LOGFILE_TO_SCREEN}
+
+        # Print out the diagnostic logfile to the console
+        echo "Diagnostic Results"
+        echo ""
+        cat $DIAGNOSTIC_LOGFILE
+
+        # Reprint out the instructions to continue to the console...
+        echo "Press $EXIT_KEY_LABEL to dismiss logfile and reboot device..."
+        echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+
+        # Wait for exit key to stop waiting
+        KEY=`$GET_KEYBOARD_INPUT`;
+        while [ $KEY -ne $EXIT_KEY ]; do
+            KEY=`$GET_KEYBOARD_INPUT`;
+        done
+
+    fi
+}
+
+
+######################################################################
+# Function:     do_device_pre_reboot_cleanup
+# Purpose:      Do any cleanup required before reboot.  Right now, it
+#               saves off the diagnostic log to the /test/diags/factory/logs
+#               folder.
+# Parameters:   none
+# Returns:      none
+######################################################################
+do_device_pre_reboot_cleanup()
+{
+    # Caller is going to reboot device, save off what we need
+    save_diaglog 0 0
+}
+
+
+######################################################################
+# Function:     vmsg
+# Purpose:      Used for verbose message logging.  This routine will
+#               only pass on the string IF diagnostics is in verbose
+#               mode (i.e. DIAG_VERBOSE = 1)
+# Parameters:   String to log
+# Returns:      none
+######################################################################
+vmsg()
+{
+    if [ "$DIAG_VERBOSE" -eq 1 ]; then
+        logger -t diags -s $@
+    fi
+}
+
+
+######################################################################
+# Function:     center_text
+# Purpose:      Given a string to center (banner), a string to center 
+#               against (base), and the starting location of that base
+#               string (base_start), this routine returns the starting
+#               column to center the banner string.
+# Parameters:   banner - string to center
+#               base_start - start column of the string to center against
+#               base_banner - string to center against
+# Returns:      start - column to display string at
+######################################################################
+center_text()
+{
+    banner="$1"
+    base_start="$2"
+    base_banner="$3"
+
+    # Center the text
+    banner_size=`echo "$banner" | wc -c`
+    base_size=`echo "$base_banner" | wc -c`
+    let start=${base_size}-${banner_size}
+    let start=$start/2
+    let start+=$base_start
+    if [ $start -lt 0 ]; then
+        return 0
+    fi
+    return $start
+}
+
+######################################################################
+# Function:     print_center_text
+# Purpose:      Given a string to center (banner), a string to center 
+#               against (base_banner), and the starting location of that base
+#               string (base_start), this routine returns the starting
+#               column to center the banner string, and prints
+#               the banner and the base (base 1 line below banner).
+# Parameters:   banner - string to center
+#               base_banner - string to center against
+#               base_start - start column of the string to center against
+#               line_start - line number to print banner on
+# Returns:      Nothing
+######################################################################
+print_center_text()
+{
+    banner="$1"
+    base_banner="$2"
+    base_start="$3"
+    line_start="$4"
+
+    # Center the text
+    banner_size=`echo "$banner" | wc -c`
+    base_size=`echo "$base_banner" | wc -c`
+    let start=${base_size}-${banner_size}
+    let start=$start/2
+    let start+=$base_start
+    if [ $start -lt 0 ]; then
+        let start=0
+    fi
+
+    # Now print the banner and the base
+    ${DOUT} -n $start $line_start "$banner"
+    let next_line=line_start+1
+    ${DOUT} -n $base_start $next_line "$base_banner"
+}
+
+
+######################################################################
+# Function:     display_pass_fail
+# Purpose:      Displays the PASS/FAIL screen, requiring user to dismiss
+#               it before returning from this routine.
+# Parameters:   name - name of the diagnostic
+#               test_passed - indicates pass or fail
+#                   0 - Test Failed
+#                   1 - Test Passed
+# Returns:      none
+######################################################################
+display_pass_fail()
+{
+    diag_name="$1"
+    test_passed="$2"
+    clear_screen
+
+    # Center the text
+    banner="$diag_name Test Results"
+    base="~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    center_text "$banner" 5 "$base"
+    ${DOUT} -n $? 4 "$banner"
+    ${DOUT} -n 5 5 "$base"
+    case "$test_passed" in
+        1)
+            center_text "PASSED" 5 "$base"
+            ${DOUT} -n $? 9 "PASSED"
+            ;;
+        0)
+            center_text "FAILED" 5 "$base"
+            ${DOUT} -n $? 9 "FAILED"
+            ;;
+        *)
+            banner_string="Unknown test result $test_passed"
+            center_text "$banner_string" 5 "$base"
+            ${DOUT} -n $? 9 "$banner_string"
+            ;;
+    esac
+    banner_string="Press $EXIT_KEY_LABEL to continue."
+    center_text "$banner_string" 5 "$base"
+    ${DOUT} $? 13 "$banner_string"
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     main_success
+# Purpose:      Log a PASS result for the given test
+# Parameters:   test - string representing main diagnostic that passed
+# Returns:      none
+######################################################################
+main_success()
+{
+    # print success result...
+    logger -t diags -s "  PASS : $@"
+    diaglog "  PASS : $@"
+
+    # print blank line...
+    diaglog ""
+}
+
+
+######################################################################
+# Function:     main_failure
+# Purpose:      Log a FAIL result for the given test
+# Parameters:   test - string representing main diagnostic that failed
+# Returns:      none
+######################################################################
+main_failure()
+{
+    # print failure result...
+    logger -t diags -s "  FAIL : $@"
+    diaglog "  FAIL : $@"
+
+    # print blank line...
+    diaglog ""
+}
+
+
+######################################################################
+# Function:     failure
+# Purpose:      Log a FAIL result for the given sub-test.
+# Parameters:   test - string representing sub-test that failed
+# Returns:      none
+######################################################################
+failure()
+{
+    logger -t diags -s "        FAIL : $@"
+    diaglog "        FAIL : $@"
+	if [ "$RUN_IN_FAILURE_REASON" == "No Failure" ]; then
+		export RUN_IN_FAILURE_REASON="$@"
+	fi
+    export SUB_TEST_PASS=0
+}
+
+
+######################################################################
+# Function:     success
+# Purpose:      Log a SUCCESS result for the given sub-test.
+# Parameters:   test - string representing sub-test that passed 
+# Returns:      none
+######################################################################
+success()
+{
+    logger -t diags -s "        PASS : $@"
+    diaglog "        PASS : $@"
+}
+
+
+######################################################################
+# Function:     main_success_or_fail
+# Purpose:      Passed the string name of the test, this routine tests
+#               results of all sub-tests to see if any failed.  If 
+#               any did, we fail the diagnostic.  Otherwise, we 
+#               indicate success
+# Parameters:   test - string representing main diagnostic test name
+# Returns:      none
+# Side Effects: Sets PASS to 0 on failure
+######################################################################
+main_success_or_fail()
+{
+    TEST_NAME="$1"
+
+    # Start positive
+    if [ "$SUB_TEST_PASS" -eq 1 ]; then
+        main_success "$TEST_NAME"
+    else
+        main_failure "$TEST_NAME"
+        export PASS=0
+    fi
+}
+
+
+######################################################################
+# Function:     did_diag_pass
+# Purpose:      Return whether diagnostic passed or not based on whether
+#               any of the sub-tests failed or not.
+# Parameters:   none
+# Returns:      0 - Diagnostic failed because a sub-test failed
+#               1 - Diagnostic passed because all sub-tests passed
+######################################################################
+did_diag_pass()
+{
+    return $SUB_TEST_PASS
+}
+
+
+######################################################################
+# Function:     did_diag_fail
+# Purpose:      Return whether diagnostic failed or not based on whether
+#               any of the sub-tests failed or not.
+# Parameters:   none
+# Returns:      0 - Diagnostic passed because all sub-tests passed
+#               1 - Diagnostic failed because a sub-test failed
+######################################################################
+did_diag_fail()
+{
+    did_diag_pass
+    pass="$?"
+    if [ $pass -eq 1 ]; then
+        return 0;
+    fi
+    return 1
+}
+
+
+######################################################################
+# Function:     clear_diag_fail
+# Purpose:      Reset SUB_TEST_PASS to 1 to clear out older diagnostic
+#               failure information.
+# Parameters:   none
+# Returns:      none
+# Side Effects: Sets SUB_TEST_PASS to 1
+######################################################################
+clear_diag_fail()
+{
+    export SUB_TEST_PASS=1
+}
+
+
+######################################################################
+# Function:     enter_diag
+# Purpose:      Called by individual diagnostics to enter the 
+#               diagnostic in a consistent fashion.
+#               Passed the string of the test, this function will print
+#               the string to the logfile.  The string should be the 
+#               name of the diagnostic test.
+# Parameters:   name - name of diagnostic test being entered
+# Returns:      none
+######################################################################
+enter_diag()
+{
+    diaglog "$@ Diagnostic Test:"
+}
+
+
+######################################################################
+# Function:     exit_diag
+# Purpose:      Called by individual diagnostics to exit the diagnostic
+#               in a consistent fashion.
+#               Passed the string of the test, this function will print
+#               the overall PASS/FAIL message based on results of all
+#               sub-test runs.  After printing the results, will exit
+#               with status 0 on success, status 1 on failure
+# Parameters:   name - name of diagnostic test being exited
+# Optional Parm: show - if present, indicate whether to show pass/fail
+#                       status screen.  
+#                   One of:
+#                   0 - Don't show status screen
+#                   1 - Show status screen
+#                   2 - Don't show success status screen (but still show failure)
+#                exit_val - if present, exit with the given value after
+#                   logging results.
+# Returns:      Exits with various status:
+#                   1 - Failure status
+#                   0 - Success Status
+#                   exit_val - user passed in exit value
+######################################################################
+exit_diag()
+{
+    USE_DEFAULT=1
+    DIAG_NAME="$1"
+    if [ $# -ge 2 ]; then
+        SHOW_PASS_FAIL="$2"
+    else
+        SHOW_PASS_FAIL=1
+    fi
+    if [ $# -eq 3 ]; then
+        RETURN_VALUE="$3"
+        USE_DEFAULT=0
+    fi
+    
+
+    #
+    # After all sub-tests are run, record the results.  A final call to
+    # main_success_or_failure() will check results of sub-tests, and if
+    # all sub-tests passed, will grant a PASS for the main diagnostic.
+    # If any sub-tests failed, a "FAIL" will be the recorded result for
+    # the main diagnostic.
+    #
+    main_success_or_fail "$DIAG_NAME Diagnostic Test"
+
+    # Display final results summary screen if showing pass or fail
+    if [ $SHOW_PASS_FAIL -eq 1 ] ||
+       ([ $SHOW_PASS_FAIL -eq 2 ] && [ $PASS -ne 1 ]); then
+        display_pass_fail "$DIAG_NAME Diagnostic" "$PASS"
+    fi
+
+    # Return pass/fail status
+    if [ $USE_DEFAULT -eq 0 ]; then
+        exit $RETURN_VALUE;     # Exit specified status
+    fi
+
+    if [ $PASS -eq 1 ]; then
+        exit 0;     # Exit success status
+    else
+        exit 1;     # Exit failure status
+    fi
+}
+
+
+######################################################################
+# Function:     wait_for_key
+# Purpose:      Wait for the given key to be pressed before returning
+#               control.
+# Parameters:   key - keycode for key to wait for
+# Returns:      none
+######################################################################
+wait_for_key()
+{
+    DONE=0
+    while [ $DONE -ne 1 ]; do
+        # wait for the key and then return
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            if [ $1 -eq $KEY ]; then
+                DONE=1
+            fi
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     sh_array
+# Purpose:      Array indexing routine
+# Parameters:   array - the array to index into
+#               index - ordinality of item to extract and echo
+# Returns:      none
+# Side Effect:  Echo's requested array element
+######################################################################
+sh_array()
+{
+    element="$2"
+    echo "$1" | awk "{print \$${element}}"
+}
+
+
+######################################################################
+# Function:     subtest_verify
+# Purpose:      Display a dialog to allow the operator to indicate
+#               success or failure for a test.
+# Parameters:   name - name of test
+# Returns:      none
+# Side Effect:  Sets SUB_TEST_PASS to 0 if operator indicates failure
+######################################################################
+subtest_verify()
+{
+    test_name="$1"
+
+    #
+    # Display a screen and waits for the user
+    # to hit EITHER the SUCCESS_KEY or the FAILURE_KEY
+    #   (defined and exported in diags script)
+    #
+    # This example is typically used for a sub-diagnostic test (a diag test
+    # that is comprised of more than one sub-test).  The result of each
+    # sub-test is recorded via calling success() or failure().
+    #
+    clear_screen
+    ${DOUT} -n 10 4 "$test_name"
+    ${DOUT} -n 8 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    ${DOUT} -n 6 7 "Press $SUCCESS_KEY_LABEL if the test worked properly."
+    ${DOUT} 6 9 "Press $FAILURE_KEY_LABEL if the test DID NOT work properly."
+    DONE=0
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            case "$KEY" in
+            $SUCCESS_KEY)
+                success "$test_name"
+                DONE=1
+                ;;
+
+            $FAILURE_KEY)
+                failure "$test_name"
+                DONE=1
+                ;;
+
+            *)
+                vmsg "Wrong key "$KEY" pressed.."
+                ;;
+            esac
+        fi
+    done
+}
+
+
+######################################################################
+# Function:     display_pass_fail_dialog
+# Purpose:      Display a pass/fail dialog, requiring user to dismiss it.
+# Parameters:   banner - string to display in the page banner
+#               failed - whether test failed or not:
+#                   0 - Display "Passed"
+#                   1 - Display "Failed"
+# Returns:      none
+######################################################################
+display_pass_fail_dialog()
+{
+    banner="$1"
+    failed="$2"
+    
+    clear_screen
+    ${DOUT} -n 14 4 "$banner"
+    ${DOUT} -n 10 5 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    case "$failed" in
+        1)
+            RESULT_STR="FAILED"
+            ;;
+        0)
+            RESULT_STR="PASSED"
+            ;;
+        *)
+            RESULT_STR="ERROR - UNKNOWN RESULT"
+            ;;
+    esac
+    ${DOUT} -n 20 10 "$RESULT_STR"
+    ${DOUT} 13 15 "Press $EXIT_KEY_LABEL to continue."
+    wait_for_key $EXIT_KEY
+}
+
+
+######################################################################
+# Function:     dump_char
+# Purpose:      Grab a character from serial port (or keyboard) and
+#				throw it away.  This is useful to dump the CR at the
+#				end of input coming from serial port.
+# Parameters:   none
+# Returns:      none
+######################################################################
+dump_char()
+{
+	dump_key=`$GET_KEYBOARD_INPUT 1`
+}
+
+
+######################################################################
+# Function:     diag_line_read
+# Purpose:      Read a line from the device keyboard or the serial port
+# Parameters:   none
+# Returns:      Line read
+######################################################################
+diag_line_read()
+{
+    DONE=0
+    LINE_BUFFER=""
+    while [ $DONE -ne 1 ]; do
+        KEY=`$GET_KEYBOARD_INPUT`
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+            case "$KEY" in
+            $KEY_ENTER)
+                DONE=1
+                ;;
+            *)
+                _key_text=`keycode_to_label $KEY`
+                LINE_BUFFER="${LINE_BUFFER}${_key_text}"
+                ;;
+            esac
+        fi
+    done
+    echo "$LINE_BUFFER"
+}
+
+
+######################################################################
+# Function:     has_diags_been_disabled
+# Purpose:      Determine if system diagnostics has been previously
+#               disabled or not.
+# Parameters:   none
+# Returns:      0 - Diagnostics have been disabled previously
+#               1 - Diagnostics have not been disabled previously
+######################################################################
+has_diags_been_disabled()
+{
+    if [ -f $ENABLE_DIAGNOSTICS_FS_FILE ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+get_uptime()
+{
+    echo `sed -e "s/ [0-9].*//;s/\([0-9]*\)\..*/\1/" < /proc/uptime`
+}

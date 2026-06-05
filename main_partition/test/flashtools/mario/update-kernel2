@@ -1,0 +1,37 @@
+#!/bin/sh
+
+_KERNEL_FLASH=/dev/mtdblock/4
+_KERNEL_MTD=/dev/mtd/4
+_KERNEL_FILE=
+
+_HARDWARE=`awk '/Hardware/ { print $3 }' </proc/cpuinfo`
+_MARIO="Mario"
+
+_SYNC=/bin/sync
+
+if [ $# != 1 ]; then
+    echo "usage: $0 <kernel file>"
+    exit 1
+fi
+
+_KERNEL_FILE="$1"
+
+echo "flashing ${_KERNEL_FILE} to ${_KERNEL_FLASH}..."
+
+if [ ${_HARDWARE} = ${_MARIO} ]; then
+    flash_unlock ${_KERNEL_MTD}
+fi
+    
+dd if=${_KERNEL_FILE} of=${_KERNEL_FLASH} bs=131072
+_RES=$?
+
+${_SYNC}
+
+if [ ${_RES} -eq 0 ]; then
+    echo "flash completed successfully"
+else
+    echo "flash failed: ${_RES}"
+    _RES=2
+fi
+
+exit ${_RES}

@@ -1,0 +1,118 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_EINK_UPDATE_DISPLAY=${EINK_PROC}/update_display
+_EINK_UPDATE_DISPLAY_AREA=3
+
+_EINK_SYSFS=/sys/devices/platform/eink_fb.0
+_EINK_IOCTL_TIME=${_EINK_SYSFS}/ioctl_time
+_EINK_TEST_SUSPEND_RESUME=${_EINK_SYSFS}/test_suspend_resume
+_EINK_TEST_SUSPEND=1
+_EINK_TEST_RESUME=0
+
+_TOP_OF_SCREEN_MSG="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_BOT_OF_SCREEN_MSG="01234567890123456789012345"
+_CLEAR_THE_MESSAGE="                          "
+
+_IOCTL_TIME_AVG_CNT=100
+_IOCTL_TIME_AVG_MOD=$(( ${_IOCTL_TIME_AVG_CNT} - 1 ))
+
+_LOC=
+_MSG=
+
+suspend_resume()
+{
+    echo ${_EINK_TEST_SUSPEND} >${_EINK_TEST_SUSPEND_RESUME}
+    sleep 1
+    echo ${_EINK_TEST_RESUME}  >${_EINK_TEST_SUSPEND_RESUME}
+}
+
+update_buffer()
+{
+    # Center the message horizontally, and assume it's to go into the top of the buffer.
+    #
+    _EIPS_X_UPDATE_BUF=$(( ((${SCREEN_X_RES}/${EIPS_X_RES} - ${#_MSG})/2 - 1) ))
+    _EIPS_Y_UPDATE_BUF=0
+    
+    # But put it into the bottom of the buffer if it's supposed to go there instead.
+    #
+    case ${_LOC} in
+        bot)
+            _EIPS_Y_UPDATE_BUF=$(( (${SCREEN_Y_RES}/${EIPS_Y_RES} - 1) ))
+        ;;
+    esac
+
+    ${EIPS} -n ${_EIPS_X_UPDATE_BUF} ${_EIPS_Y_UPDATE_BUF} "${_MSG}"
+}
+
+update_display()
+{
+    # Assume that we're updating the top of the display.
+    #
+    let x1=0
+    let x2=${SCREEN_X_RES}
+    let y1=0
+    let y2=${EIPS_Y_RES}
+    
+    # But use the bottom line if we're supposed to.
+    #
+    case ${_LOC} in
+        bot)
+            let y1=${SCREEN_Y_RES}-${EIPS_Y_RES}
+            let y2=${SCREEN_Y_RES}
+        ;;
+    esac
+    
+    echo ${_EINK_UPDATE_DISPLAY_AREA} $x1 $y1 $x2 $y2 >${_EINK_UPDATE_DISPLAY}
+}
+
+# Set things up and loop forever.
+#
+_LOC=${1:-top}
+let ioctl_time=0
+let count=0
+
+while [ true ]; do
+
+    # Clear the message every other time through the loop to keep it changing.
+    #
+    if [ $(($count % 2)) -ne 0 ]; then
+
+        case ${_LOC} in
+            bot)
+                _MSG=${_BOT_OF_SCREEN_MSG}
+            ;;
+            
+            *)
+                _MSG=${_TOP_OF_SCREEN_MSG}
+            ;;
+        esac
+
+    else
+
+        _MSG=${_CLEAR_THE_MESSAGE}
+
+    fi
+
+    # Update the buffer with this loop's message and then put it onto the display.
+    #
+    update_buffer
+    update_display
+    
+    # Test suspend/resume before the next loop.
+    #
+    suspend_resume
+    
+    # Do some bookkeeping.
+    #
+    let ioctl_time+=`awk '{ print $1 }' ${_EINK_IOCTL_TIME}`
+    let count+=1
+    
+    if [  $(($count % ${_IOCTL_TIME_AVG_CNT})) -eq ${_IOCTL_TIME_AVG_MOD} ]; then
+        let ioctl_time=$(( $ioctl_time/${_IOCTL_TIME_AVG_CNT} ))
+        echo "avg area-update time = ${ioctl_time}ms"
+    fi
+
+done

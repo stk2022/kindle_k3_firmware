@@ -1,0 +1,51 @@
+#!/bin/sh
+
+_FUNCTIONS=/etc/rc.d/functions
+[ -f ${_FUNCTIONS} ] && . ${_FUNCTIONS}
+
+_HOME_MENU_UP_DOWN=/opt/eink/scripts/home_menu_up_down
+_HOME_MENU_UP_DOWN_PIDFILE=/var/run/`basename ${_HOME_MENU_UP_DOWN}`.pid
+
+start_home_menu_up_down()
+{
+    if [ -x "${_HOME_MENU_UP_DOWN}" ]; then
+        ${_HOME_MENU_UP_DOWN} &
+        if [ $? ]; then
+            echo $! >${_HOME_MENU_UP_DOWN_PIDFILE}
+        fi
+    fi
+}
+
+stop_home_menu_up_down()
+{
+    if [ -r "${_HOME_MENU_UP_DOWN_PIDFILE}" ]; then
+        kill `cat ${_HOME_MENU_UP_DOWN_PIDFILE}`
+        rm "${_HOME_MENU_UP_DOWN_PIDFILE}"
+    fi
+}
+
+# Start/stop Home menu up/down test.
+#
+_ACTION=${1:-stop}
+
+if ( is_Framework_Running ); then
+
+    case ${_ACTION} in
+    
+        start)
+            stop_home_menu_up_down
+            wake_framework
+            start_home_menu_up_down
+        ;;
+        
+        stop)
+            stop_home_menu_up_down
+        ;;
+    
+    esac
+
+else
+
+    echo "This test requires the Framework to run."
+
+fi
