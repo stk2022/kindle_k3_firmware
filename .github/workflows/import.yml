@@ -1,6 +1,6 @@
 name: Remote Import
 on: 
-  workflow_dispatch: # This adds a "Run" button in the GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   import_zip:
@@ -9,11 +9,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download and Extract
+      - name: Install 7zip
+        run: sudo apt-get install -y p7zip-full
+
+      - name: Download Zip
         run: |
-          # Replace the URL below with your actual server link
-          curl -L -o data.zip "https://nextalg.com/kindle_firmware.zip"
-          unzip data.zip
+          # Use -C to resume if it hangs, and check the file size after
+          curl -L -C - -o data.zip "https://nextalg.com/kindle_firmware.zip"
+          ls -lh data.zip
+
+      - name: Extract with 7zip
+        run: |
+          # 7z is more resilient to 'exit code 2' errors than standard unzip
+          7z x data.zip -y
           rm data.zip
 
       - name: Commit files
@@ -21,5 +29,6 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Imported and extracted firmware via Workflow"
+          # We use '|| true' so the workflow doesn't fail if there are no changes
+          git commit -m "Imported firmware via 7zip" || true
           git push
