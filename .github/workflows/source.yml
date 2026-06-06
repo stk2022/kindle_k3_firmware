@@ -1,4 +1,4 @@
-name: Download External File
+name: Download and Split External File
 
 on:
   # Allows you to run this workflow manually from the Actions tab
@@ -16,19 +16,28 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Download the file directly into the root directory
+      # Step 2: Download the file directly into the runner
       - name: Download Target File
         run: |
           curl -L -o Kindle_src_3.4.3_3543620001.tar.gz "https://kindledownloads.s3.amazonaws.com/Kindle_src_3.4.3_3543620001.tar.gz"
 
-      # Step 3: Commit and push the file back to your repository
-      - name: Commit and Push File
+      # Step 3: Split the file into 90MB chunks
+      - name: Split Large File
+        run: |
+          # Splits the file into Kindle_part_aa, Kindle_part_ab, etc.
+          split -b 90M Kindle_src_3.4.3_3543620001.tar.gz Kindle_part_
+          
+          # Delete the original large file so it doesn't get tracked
+          rm Kindle_src_3.4.3_3543620001.tar.gz
+
+      # Step 4: Commit and push the split files back to your repository
+      - name: Commit and Push Files
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # Add the specific downloaded file
-          git add Kindle_src_3.4.3_3543620001.tar.gz
+          # Add the split chunks
+          git add Kindle_part_*
           
-          # Commit only if the file is new or changed to avoid workflow errors
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: fetch latest Kindle source file" && git push)
+          # Commit only if the files are new or changed to avoid workflow errors
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: fetch and split latest Kindle source file" && git push)
